@@ -1,0 +1,91 @@
+import React from 'react'
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { ThemeProvider } from './context/ThemeContext'
+import { AuthProvider } from './context/AuthContext'
+import { AppProvider } from './context/AppContext'
+import { AppShell } from './components/layout/AppShell'
+import { ProtectedRoute } from './components/layout/ProtectedRoute'
+
+// Auth Pages
+import SignInPage from './pages/auth/SignInPage'
+import SignUpPage from './pages/auth/SignUpPage'
+import ForgotPasswordPage from './pages/auth/ForgotPasswordPage'
+
+// Main Application Pages
+import DashboardPage from './pages/DashboardPage'
+import FeedbackPage from './pages/FeedbackPage'
+import InsightsPage from './pages/InsightsPage'
+import PersonasPage from './pages/PersonasPage'
+import PrioritizationPage from './pages/PrioritizationPage'
+import SimulatorPage from './pages/SimulatorPage'
+import PRDGeneratorPage from './pages/PRDGeneratorPage'
+import RoadmapPage from './pages/RoadmapPage'
+import ExperimentsPage from './pages/ExperimentsPage'
+import ReleaseReadinessPage from './pages/ReleaseReadinessPage'
+import CopilotPage from './pages/CopilotPage'
+import CompetitorIntelPage from './pages/CompetitorIntelPage'
+import CustomerJourneyPage from './pages/CustomerJourneyPage'
+import ReportsPage from './pages/ReportsPage'
+import ActivityHistoryPage from './pages/ActivityHistoryPage'
+import SettingsPage from './pages/SettingsPage'
+import NotFoundPage from './pages/NotFoundPage'
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AuthProvider>
+        <AppProvider>
+          <HashRouter>
+            <Routes>
+              {/* Public Authentication Routes */}
+              <Route path="/signin" element={<SignInPage />} />
+              <Route path="/signup" element={<SignUpPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+              {/* Protected Workspace Routes inside AppShell */}
+              <Route
+                element={
+                  <ProtectedRoute>
+                    <AppShell />
+                  </ProtectedRoute>
+                }
+              >
+                <Route path="/" element={<DashboardPage />} />
+                <Route path="/feedback" element={<FeedbackPage />} />
+                <Route path="/insights" element={<InsightsPage />} />
+                <Route path="/personas" element={<PersonasPage />} />
+                <Route path="/prioritization" element={<PrioritizationPage />} />
+                <Route path="/simulator" element={<SimulatorPage />} />
+
+                {/* PRD Generator (support both /prd-generator and /prds) */}
+                <Route path="/prd-generator" element={<PRDGeneratorPage />} />
+                <Route path="/prds" element={<Navigate to="/prd-generator" replace />} />
+
+                <Route path="/roadmap" element={<RoadmapPage />} />
+                <Route path="/experiments" element={<ExperimentsPage />} />
+                <Route path="/release-readiness" element={<ReleaseReadinessPage />} />
+                <Route path="/copilot" element={<CopilotPage />} />
+                <Route path="/competitors" element={<CompetitorIntelPage />} />
+
+                {/* Customer Journey (support both /journey and /customer-journey) */}
+                <Route path="/journey" element={<CustomerJourneyPage />} />
+                <Route path="/customer-journey" element={<Navigate to="/journey" replace />} />
+
+                <Route path="/reports" element={<ReportsPage />} />
+
+                {/* Activity History & Audit (support both /history and /activity-history) */}
+                <Route path="/history" element={<ActivityHistoryPage />} />
+                <Route path="/activity-history" element={<Navigate to="/history" replace />} />
+
+                <Route path="/settings" element={<SettingsPage />} />
+
+                {/* 404 Catch-all */}
+                <Route path="*" element={<NotFoundPage />} />
+              </Route>
+            </Routes>
+          </HashRouter>
+        </AppProvider>
+      </AuthProvider>
+    </ThemeProvider>
+  )
+}
