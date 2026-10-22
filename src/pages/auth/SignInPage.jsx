@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { Sparkles, Eye, EyeOff, Lock, Mail, ArrowRight, ShieldAlert, CheckCircle2 } from 'lucide-react'
+import { Sparkles, Eye, EyeOff, Lock, Mail, ArrowRight, ShieldAlert, CheckCircle2, UserCheck } from 'lucide-react'
+import { isBackendConfigured } from '../../services/api/apiClient'
 
 export function SignInPage() {
   const navigate = useNavigate()
@@ -34,14 +35,16 @@ export function SignInPage() {
     if (res.success) {
       navigate(from, { replace: true })
     } else {
-      setError(res.error || 'Failed to sign in.')
+      setError(res.error || 'Failed to sign in as Product Manager.')
     }
   }
 
-  const handleDemoPreset = (role) => {
-    demoLogin(role)
+  const handle1ClickPMLogin = () => {
+    demoLogin()
     navigate(from, { replace: true })
   }
+
+  const backendConfigured = isBackendConfigured()
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4 bg-slate-50 dark:bg-navy-950 text-slate-900 dark:text-slate-100 relative overflow-hidden">
@@ -59,39 +62,32 @@ export function SignInPage() {
             Product Mind <span className="text-brand-500">AI</span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-            Product Intelligence Workspace
+            Product Manager (PM) Workspace Portal
           </p>
         </div>
 
-        {/* 1-Click Demo Quick Access */}
-        <div className="mb-6 p-3 rounded-2xl bg-brand-50/60 dark:bg-brand-950/40 border border-brand-200/60 dark:border-brand-800/60">
-          <p className="text-[11px] font-bold text-brand-700 dark:text-brand-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Instant Demo Access (Recruiter Presets)</span>
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => handleDemoPreset('lead')}
-              className="px-2 py-1.5 rounded-lg bg-white dark:bg-navy-900 border border-brand-200 dark:border-brand-700/60 text-[11px] font-semibold text-slate-800 dark:text-slate-200 hover:bg-brand-50 dark:hover:bg-brand-900/50 shadow-sm cursor-pointer"
-            >
-              Lead PM
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDemoPreset('exec')}
-              className="px-2 py-1.5 rounded-lg bg-white dark:bg-navy-900 border border-brand-200 dark:border-brand-700/60 text-[11px] font-semibold text-slate-800 dark:text-slate-200 hover:bg-brand-50 dark:hover:bg-brand-900/50 shadow-sm cursor-pointer"
-            >
-              VP Product
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDemoPreset('ops')}
-              className="px-2 py-1.5 rounded-lg bg-white dark:bg-navy-900 border border-brand-200 dark:border-brand-700/60 text-[11px] font-semibold text-slate-800 dark:text-slate-200 hover:bg-brand-50 dark:hover:bg-brand-900/50 shadow-sm cursor-pointer"
-            >
-              ProdOps
-            </button>
+        {/* 1-Click Instant PM Demo Quick Access (Single PM Flow, No Multiple Roles) */}
+        <div className="mb-6 p-3.5 rounded-2xl bg-brand-50/70 dark:bg-brand-950/40 border border-brand-200/70 dark:border-brand-800/60">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-brand-700 dark:text-brand-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-brand-500" />
+              <span>Product Manager Demo Access</span>
+            </span>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-brand-200/60 dark:bg-brand-900/60 text-brand-800 dark:text-brand-200">
+              1-Click PM
+            </span>
           </div>
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 mb-2.5 leading-snug">
+            Sign in directly to the Lead Product Manager workspace with pre-populated intelligence datasets.
+          </p>
+          <button
+            type="button"
+            onClick={handle1ClickPMLogin}
+            className="w-full py-2 px-3 rounded-xl bg-white dark:bg-navy-900 border border-brand-300 dark:border-brand-700/80 text-xs font-bold text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-900/50 shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-all"
+          >
+            <UserCheck className="w-4 h-4 text-brand-600 dark:text-brand-400" />
+            <span>Launch PM Workspace Demo</span>
+          </button>
         </div>
 
         {/* Error notification */}
@@ -106,7 +102,7 @@ export function SignInPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              Email Address
+              Product Manager Email
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -115,7 +111,7 @@ export function SignInPage() {
                 required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="name@company.com"
+                placeholder="pm@productmind.ai"
                 className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
             </div>
@@ -158,7 +154,7 @@ export function SignInPage() {
                 onChange={e => setRememberMe(e.target.checked)}
                 className="rounded text-brand-600 focus:ring-brand-500"
               />
-              <span>Remember this session</span>
+              <span>Remember PM session</span>
             </label>
           </div>
 
@@ -168,28 +164,23 @@ export function SignInPage() {
             className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-electric-600 hover:from-brand-500 hover:to-electric-500 text-white font-bold text-xs shadow-md hover:shadow-glow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             {loading ? (
-              <span>Authenticating...</span>
+              <span>Authenticating PM Account...</span>
             ) : (
               <>
-                <span>Sign In to Workspace</span>
+                <span>Sign In to PM Workspace</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
         </form>
 
-        <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800/80 text-center">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Don't have an account?{' '}
-            <Link to="/signup" className="font-semibold text-brand-600 dark:text-brand-400 hover:underline">
-              Create an account
-            </Link>
-          </p>
-        </div>
-
-        {/* Security / Mock Disclosure */}
-        <div className="mt-4 p-2.5 rounded-xl bg-slate-100/70 dark:bg-navy-950/70 border border-slate-200 dark:border-slate-800 text-[10px] text-slate-500 text-center leading-snug">
-          🔒 Frontend Demonstration Auth: No live server or database required. Credentials saved to browser localStorage.
+        {/* Security / Backend Integration Notice */}
+        <div className="mt-5 p-2.5 rounded-xl bg-slate-100/70 dark:bg-navy-950/70 border border-slate-200 dark:border-slate-800 text-[10px] text-slate-500 text-center leading-snug">
+          {backendConfigured ? (
+            <span>🔒 Connected to Backend Authentication Server</span>
+          ) : (
+            <span>🔒 Frontend Demonstration Mode: PM Credentials validated locally. Prepared for future backend API integration.</span>
+          )}
         </div>
       </div>
     </div>

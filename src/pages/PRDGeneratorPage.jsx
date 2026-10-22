@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import {
   FileText,
@@ -14,11 +15,15 @@ import {
   ChevronRight,
   ExternalLink,
   RotateCcw,
+  Layers,
+  Link as LinkIcon,
 } from 'lucide-react'
-import { Card, Badge, Button, Modal } from '../components/common'
+import { Card, Badge, Button, Modal, DemoModeBanner } from '../components/common'
 import { generatePRDTemplate } from '../services/aiSimulationService'
+import { prdService } from '../services/api/prdService'
 
 export function PRDGeneratorPage() {
+  const navigate = useNavigate()
   const {
     prds,
     features,
@@ -52,10 +57,11 @@ export function PRDGeneratorPage() {
     }
   }
 
-  // Auto-generate from selected feature
-  const handleGenerateFromFeature = () => {
+  // Auto-generate from selected feature via service
+  const handleGenerateFromFeature = async () => {
     const feat = features.find(f => f.id === selectedFeatureId)
-    const generatedSections = generatePRDTemplate(feat, customTitle)
+    const res = await prdService.generatePRD(feat, customTitle)
+    const generatedSections = res.data?.sections || generatePRDTemplate(feat, customTitle)
 
     const newDoc = createPRD({
       title: customTitle || (feat ? `${feat.name} Specification` : 'Product Requirements Document'),
@@ -69,7 +75,7 @@ export function PRDGeneratorPage() {
     setEditableSections(generatedSections)
     setShowNewModal(false)
     setCustomTitle('')
-    addToast('13-section PRD generated using AI simulation template', 'success')
+    addToast('13-section PRD generated (Template mode ready for backend LLM)', 'success')
   }
 
   // Save changes to PRD
@@ -150,6 +156,11 @@ export function PRDGeneratorPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
+      {/* Demo Mode Banner */}
+      <DemoModeBanner
+        message="PRD Studio: 13-section specifications generated from workspace context and deterministic templates in Demo Mode. Prepared for future backend LLM generation API."
+      />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -179,6 +190,38 @@ export function PRDGeneratorPage() {
           </Button>
         </div>
       </div>
+
+      {/* Traceability Bar */}
+      {activePRD && (
+        <div className="p-3 rounded-xl bg-slate-50 dark:bg-navy-950/70 border border-slate-200/80 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-bold text-slate-700 dark:text-slate-300">
+              Artifact Traceability:
+            </span>
+            {features.find(f => f.id === activePRD.featureId) ? (
+              <span className="text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                Linked to Feature: <strong className="text-brand-600 dark:text-brand-400">{features.find(f => f.id === activePRD.featureId)?.name}</strong>
+              </span>
+            ) : (
+              <span className="text-slate-400 italic">Standalone PRD Document</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Link to="/prioritization">
+              <button className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-white dark:bg-navy-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:text-brand-600 flex items-center gap-1 cursor-pointer">
+                <LinkIcon className="w-3 h-3 text-brand-500" />
+                <span>Prioritization Matrix</span>
+              </button>
+            </Link>
+            <Link to="/aggregation">
+              <button className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-white dark:bg-navy-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:text-brand-600 flex items-center gap-1 cursor-pointer">
+                <Layers className="w-3 h-3 text-brand-500" />
+                <span>Aggregated Feedback</span>
+              </button>
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Main Layout: PRD Sidebar & Document Viewer */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">

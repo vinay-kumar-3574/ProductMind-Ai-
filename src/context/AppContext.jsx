@@ -8,6 +8,7 @@ import {
 import { calculatePriorityScore } from '../data/scoringFormulas'
 import { createHistoryRecord, appendHistory } from '../services/historyService'
 import { queryCopilot } from '../services/aiSimulationService'
+import { copilotService } from '../services/api/copilotService'
 
 const AppContext = createContext(null)
 
@@ -512,16 +513,19 @@ export function AppProvider({ children }) {
     }))
 
     // Simulated thought & context retrieval delay
-    await new Promise(resolve => setTimeout(resolve, 800))
+    await new Promise(resolve => setTimeout(resolve, 600))
 
     const context = { feedback, features, prds, roadmap, releases, experiments }
-    const botReply = queryCopilot(userMessage, context)
+    const result = await copilotService.sendMessage(userMessage, context)
 
     const botMsgObj = {
-      id: `m-bot-${Date.now()}`,
+      id: result.data?.id || `m-bot-${Date.now()}`,
       role: 'assistant',
-      content: botReply,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      content: result.data?.text || result.error || 'Unable to generate response.',
+      timestamp: result.data?.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isDemo: Boolean(result.isDemo),
+      evidence: result.data?.evidence || [],
+      error: !result.success ? result.error : null,
     }
 
     setCopilotChats(prev => prev.map(chat => {

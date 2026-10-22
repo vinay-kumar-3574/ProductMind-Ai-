@@ -42,7 +42,9 @@ export function TopNavbar({ onOpenSearch, onOpenCommandPalette }) {
   const getBreadcrumb = () => {
     const path = location.pathname
     if (path === '/') return { title: 'Executive Dashboard', parent: 'Workspace' }
+    if (path === '/analytics') return { title: 'Product Analytics & Ingestion', parent: 'Analytics' }
     if (path === '/feedback') return { title: 'Feedback Explorer', parent: 'Intelligence' }
+    if (path === '/aggregation') return { title: 'Feature Request Aggregation', parent: 'Product Decisions' }
     if (path === '/insights') return { title: 'AI Insights', parent: 'Intelligence' }
     if (path === '/personas') return { title: 'Customer Personas', parent: 'Intelligence' }
     if (path === '/prioritization') return { title: 'Feature Prioritization', parent: 'Product Decisions' }

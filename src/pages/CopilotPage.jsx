@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import {
   BotMessageSquare,
@@ -11,8 +12,12 @@ import {
   User,
   Check,
   Lightbulb,
+  ExternalLink,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react'
-import { Card, Badge, Button, Modal } from '../components/common'
+import { Card, Badge, Button, Modal, DemoModeBanner } from '../components/common'
+import { isBackendConfigured } from '../services/api/apiClient'
 
 export function CopilotPage() {
   const {
@@ -70,7 +75,9 @@ export function CopilotPage() {
   ]
 
   return (
-    <div className="h-[calc(100vh-8.5rem)] flex flex-col lg:flex-row gap-4 max-w-7xl mx-auto">
+    <div className="space-y-3">
+      <DemoModeBanner featureName="Product Copilot" />
+      <div className="h-[calc(100vh-12rem)] flex flex-col lg:flex-row gap-4 max-w-7xl mx-auto">
       {/* Left Column: Chat Sessions List */}
       <Card className="w-full lg:w-72 shrink-0 p-3 flex flex-col justify-between">
         <div>
@@ -115,7 +122,7 @@ export function CopilotPage() {
 
         {/* Disclaimer footer */}
         <div className="pt-3 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 text-center leading-snug">
-          ⚡ Powered by local deterministic intelligence reading live workspace data.
+          ⚡ Powered by contextual intelligence referencing active workspace data.
         </div>
       </Card>
 
@@ -174,10 +181,57 @@ export function CopilotPage() {
                       : 'bg-slate-100 dark:bg-navy-950 text-slate-800 dark:text-slate-200 border border-slate-200/80 dark:border-slate-800 rounded-tl-none whitespace-pre-line'
                   }`}
                 >
-                  <p>{msg.content}</p>
+                  {msg.error ? (
+                    <div className="space-y-2 text-rose-600 dark:text-rose-400">
+                      <div className="flex items-center gap-1.5 font-semibold">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>Query Failed</span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-400">{msg.error}</p>
+                      <button
+                        onClick={() => handleSend(activeChat?.messages?.slice(-2)?.[0]?.content || 'Retry')}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-semibold hover:bg-rose-200 transition-colors"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Retry Query
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p>{msg.content}</p>
+
+                      {/* Evidence Links */}
+                      {msg.evidence && msg.evidence.length > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-slate-200/60 dark:border-slate-800/80">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block mb-1.5">
+                            Referenced Workspace Evidence:
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {msg.evidence.map((ev, idx) => (
+                              <Link
+                                key={idx}
+                                to={ev.path}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-brand-500/10 hover:bg-brand-500/20 text-brand-700 dark:text-brand-300 border border-brand-500/20 text-[10px] font-medium transition-colors"
+                              >
+                                <span>{ev.label}</span>
+                                {ev.count ? <span className="opacity-75">({ev.count})</span> : null}
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
 
                   <div className={`flex items-center justify-between text-[10px] mt-2 pt-1.5 border-t ${isUser ? 'border-brand-500/50 text-brand-200' : 'border-slate-200/60 dark:border-slate-800 text-slate-400'}`}>
-                    <span>{msg.timestamp}</span>
+                    <div className="flex items-center gap-2">
+                      <span>{msg.timestamp}</span>
+                      {!isUser && msg.isDemo && (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[9px] font-semibold">
+                          Demo Response
+                        </span>
+                      )}
+                    </div>
                     {!isUser && (
                       <button
                         onClick={() => copyMessage(msg.content)}
@@ -270,6 +324,7 @@ export function CopilotPage() {
           </div>
         </div>
       </Modal>
+      </div>
     </div>
   )
 }

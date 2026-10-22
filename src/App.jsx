@@ -13,7 +13,9 @@ import ForgotPasswordPage from './pages/auth/ForgotPasswordPage'
 
 // Main Application Pages
 import DashboardPage from './pages/DashboardPage'
+import AnalyticsPage from './pages/AnalyticsPage'
 import FeedbackPage from './pages/FeedbackPage'
+import AggregationPage from './pages/AggregationPage'
 import InsightsPage from './pages/InsightsPage'
 import PersonasPage from './pages/PersonasPage'
 import PrioritizationPage from './pages/PrioritizationPage'
@@ -51,7 +53,11 @@ export default function App() {
                 }
               >
                 <Route path="/" element={<DashboardPage />} />
+                <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/product-analytics" element={<Navigate to="/analytics" replace />} />
                 <Route path="/feedback" element={<FeedbackPage />} />
+                <Route path="/aggregation" element={<AggregationPage />} />
+                <Route path="/feature-aggregation" element={<Navigate to="/aggregation" replace />} />
                 <Route path="/insights" element={<InsightsPage />} />
                 <Route path="/personas" element={<PersonasPage />} />
                 <Route path="/prioritization" element={<PrioritizationPage />} />

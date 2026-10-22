@@ -20,9 +20,12 @@ import {
   FileText,
   ChevronRight,
   ArrowUpDown,
+  Layers,
+  Calculator,
+  ExternalLink,
 } from 'lucide-react'
-import { Card, Badge, Button, Modal } from '../components/common'
-import { calculatePriorityScore, getScoreBreakdown, getPriorityTier } from '../data/scoringFormulas'
+import { Card, Badge, Button, Modal, DemoModeBanner } from '../components/common'
+import { calculatePriorityScore, getScoreBreakdown, getPriorityTier, FACTOR_WEIGHTS } from '../data/scoringFormulas'
 
 export function PrioritizationPage() {
   const navigate = useNavigate()
@@ -214,11 +217,48 @@ export function PrioritizationPage() {
             </button>
           </div>
 
+          <Link to="/aggregation">
+            <Button variant="secondary" size="sm" icon={Layers}>
+              Aggregation Clusters
+            </Button>
+          </Link>
+
           <Button variant="primary" size="sm" icon={Plus} onClick={handleOpenCreate}>
             New Feature
           </Button>
         </div>
       </div>
+
+      {/* Verified Mathematical Formula & Priority Thresholds Architecture */}
+      <Card className="p-4 bg-gradient-to-r from-brand-50/60 via-slate-50 to-sky-50/60 dark:from-brand-950/40 dark:via-navy-900 dark:to-sky-950/40 border border-brand-200/70 dark:border-brand-800/60">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Calculator className="w-4 h-4 text-brand-600 dark:text-brand-400" />
+              <span className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                Verified Scoring Model & Thresholds Architecture
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 font-mono">
+              Score = (0.35 × Customer Impact) + (0.30 × Urgency) + (0.20 × Demand) + (0.15 × Business Value)
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold font-mono">
+            <span className="px-2 py-0.5 rounded-md border text-red-600 bg-red-500/10 border-red-500/20">
+              Urgent: ≥ 8.00
+            </span>
+            <span className="px-2 py-0.5 rounded-md border text-amber-600 bg-amber-500/10 border-amber-500/20">
+              High: ≥ 6.50
+            </span>
+            <span className="px-2 py-0.5 rounded-md border text-blue-600 bg-blue-500/10 border-blue-500/20">
+              Medium: ≥ 4.50
+            </span>
+            <span className="px-2 py-0.5 rounded-md border text-slate-600 bg-slate-500/10 border-slate-500/20">
+              Low: &lt; 4.50
+            </span>
+          </div>
+        </div>
+      </Card>
 
       {/* Filter and Search Bar */}
       <Card className="p-3.5 flex flex-col sm:flex-row items-center gap-3">
@@ -718,9 +758,22 @@ export function PrioritizationPage() {
               </span>
               <div className="space-y-1.5 max-h-32 overflow-y-auto">
                 {feedback.filter(f => inspectingFeature.relatedFeedbackIds?.includes(f.id)).map(fb => (
-                  <div key={fb.id} className="p-2 rounded-lg bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-[11px]">
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{fb.title}</span>
-                    <span className="text-slate-400 block mt-0.5">{fb.customer} ({fb.company})</span>
+                  <div
+                    key={fb.id}
+                    onClick={() => {
+                      setInspectingFeature(null)
+                      navigate('/feedback')
+                    }}
+                    className="p-2 rounded-lg bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-[11px] hover:border-brand-500 cursor-pointer transition-colors group flex items-center justify-between"
+                    title="Click to view feedback record in Feedback Explorer"
+                  >
+                    <div>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 group-hover:text-brand-600 dark:group-hover:text-brand-400">
+                        {fb.title}
+                      </span>
+                      <span className="text-slate-400 block mt-0.5">{fb.customer} ({fb.company})</span>
+                    </div>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-brand-500 shrink-0 ml-2" />
                   </div>
                 ))}
               </div>

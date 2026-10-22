@@ -16,6 +16,8 @@ import {
   Crosshair,
   Route,
   BarChart3,
+  TrendingUp,
+  Layers,
   History,
   Settings,
   ChevronLeft,
@@ -29,7 +31,9 @@ export function Sidebar({ collapsed, setCollapsed }) {
 
   const navItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
+    { name: 'Product Analytics', path: '/analytics', icon: TrendingUp, badge: 'Data' },
     { name: 'Feedback Explorer', path: '/feedback', icon: MessageSquareText },
+    { name: 'Feature Aggregation', path: '/aggregation', icon: Layers, badge: 'New' },
     { name: 'AI Insights', path: '/insights', icon: Sparkles, badge: 'AI' },
     { name: 'Customer Personas', path: '/personas', icon: Users },
     { name: 'Prioritization', path: '/prioritization', icon: SlidersHorizontal },

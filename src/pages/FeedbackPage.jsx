@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import {
   Search,
@@ -20,12 +21,16 @@ import {
   ChevronRight,
   X,
   FileSpreadsheet,
+  Eye,
+  Layers,
+  ExternalLink,
 } from 'lucide-react'
-import { Card, Badge, Button, Modal } from '../components/common'
+import { Card, Badge, Button, Modal, DemoModeBanner, AIClassificationCard } from '../components/common'
 import { generateSmartTags, detectDuplicates, analyzeSentiment, predictCategory } from '../services/aiSimulationService'
 import { parseFeedbackCSV, generateSampleCSV, exportFeedbackToCSV } from '../services/csvService'
 
 export function FeedbackPage() {
+  const navigate = useNavigate()
   const {
     feedback,
     features,
@@ -61,6 +66,7 @@ export function FeedbackPage() {
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
+  const [inspectingFeedbackItem, setInspectingFeedbackItem] = useState(null)
   const [showCSVModal, setShowCSVModal] = useState(false)
   const [showDuplicateWarning, setShowDuplicateWarning] = useState(null) // holds matched duplicates
 
@@ -306,16 +312,31 @@ export function FeedbackPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
+      {/* Demo / Live Status Banner */}
+      <DemoModeBanner
+        message="Displaying sample feedback intelligence with deterministic sentiment, smart tagging, and duplicate detection. Connected to local workspace store."
+      />
+
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Customer Feedback Explorer</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Customer Feedback Explorer</h2>
+            <Badge variant="brand">Intelligence Corpus</Badge>
+          </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Manage qualitative user sentiment, duplicate detection, smart tagging, and feature linking
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Aggregation pipeline shortcut */}
+          <Link to="/aggregation">
+            <Button variant="secondary" size="sm" icon={Layers}>
+              Aggregation Clusters
+            </Button>
+          </Link>
+
           {/* CSV Import button */}
           <Button
             variant="outline"
@@ -524,9 +545,13 @@ export function FeedbackPage() {
                       </td>
                       <td className="py-3 px-4 max-w-sm">
                         <div className="flex flex-col">
-                          <span className="font-bold text-slate-900 dark:text-white line-clamp-1">
+                          <button
+                            onClick={() => setInspectingFeedbackItem(item)}
+                            className="font-bold text-slate-900 dark:text-white line-clamp-1 text-left hover:text-brand-600 dark:hover:text-brand-400 cursor-pointer"
+                            title="Click to view full detail and AI classification"
+                          >
                             {item.title}
-                          </span>
+                          </button>
                           <span className="text-slate-400 line-clamp-1 mt-0.5">
                             {item.description}
                           </span>
@@ -562,16 +587,27 @@ export function FeedbackPage() {
                       </td>
                       <td className="py-3 px-4">
                         {linkedFeat ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-600 dark:text-brand-400 hover:underline">
+                          <button
+                            onClick={() => navigate('/prioritization')}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-600 dark:text-brand-400 hover:underline cursor-pointer"
+                            title="View in Prioritization Matrix"
+                          >
                             <LinkIcon className="w-3 h-3" />
                             <span className="truncate max-w-[120px]">{linkedFeat.name}</span>
-                          </span>
+                          </button>
                         ) : (
                           <span className="text-[11px] text-slate-400 italic">Unlinked</span>
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => setInspectingFeedbackItem(item)}
+                            className="p-1 text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800"
+                            title="Inspect AI Classification & Traceability"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
                           <button
                             onClick={() => handleEdit(item)}
                             className="p-1 text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -961,6 +997,90 @@ export function FeedbackPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Feedback Detail & AI Classification Modal */}
+      {inspectingFeedbackItem && (
+        <Modal
+          isOpen={Boolean(inspectingFeedbackItem)}
+          onClose={() => setInspectingFeedbackItem(null)}
+          title={inspectingFeedbackItem.title}
+          subtitle={`Source Record ID: ${inspectingFeedbackItem.id} • ${inspectingFeedbackItem.customer} (${inspectingFeedbackItem.company})`}
+          maxWidth="max-w-2xl"
+        >
+          <div className="space-y-4">
+            {/* Full description */}
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-navy-950/60 border border-slate-200 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 leading-relaxed">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                Original Customer Feedback Statement
+              </span>
+              <p>{inspectingFeedbackItem.description}</p>
+            </div>
+
+            {/* AI Classification Card Component */}
+            <AIClassificationCard
+              category={inspectingFeedbackItem.category}
+              sentiment={inspectingFeedbackItem.sentiment}
+              themes={inspectingFeedbackItem.tags || []}
+              confidence={0.94}
+              status="completed"
+            />
+
+            {/* Traceability & Navigation to Downstream Artifacts */}
+            <div className="p-3.5 rounded-xl bg-brand-50/50 dark:bg-brand-950/30 border border-brand-200/60 dark:border-brand-800/60 text-xs space-y-2">
+              <span className="text-[10px] font-bold text-brand-700 dark:text-brand-300 uppercase tracking-wider block">
+                Workflow Traceability & Requirements Linking
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="xs"
+                  icon={Layers}
+                  onClick={() => {
+                    setInspectingFeedbackItem(null)
+                    navigate('/aggregation')
+                  }}
+                >
+                  View in Feature Aggregation
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="xs"
+                  icon={LinkIcon}
+                  onClick={() => {
+                    setInspectingFeedbackItem(null)
+                    navigate('/prioritization')
+                  }}
+                >
+                  View Prioritization Matrix
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="xs"
+                  icon={ExternalLink}
+                  onClick={() => {
+                    setInspectingFeedbackItem(null)
+                    navigate('/prd-generator')
+                  }}
+                >
+                  Specifications (PRDs)
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setInspectingFeedbackItem(null)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

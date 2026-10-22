@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
@@ -40,7 +40,7 @@ import {
   CartesianGrid,
   Legend,
 } from 'recharts'
-import { Card, Badge, Button, Modal } from '../components/common'
+import { Card, Badge, Button, Modal, DemoModeBanner, EmptyState } from '../components/common'
 
 export function DashboardPage() {
   const navigate = useNavigate()
@@ -77,38 +77,59 @@ export function DashboardPage() {
     year: 'numeric',
   })
 
-  // Aggregated KPIs
-  const totalFeedbackCount = feedback.length
+  // Filter feedback by active timeRange
+  const filteredFeedback = useMemo(() => {
+    if (timeRange === 'all') return feedback
+    const days = timeRange === '7d' ? 7 : timeRange === 'quarter' ? 90 : 30
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - days)
+    const cutoffStr = cutoff.toISOString().split('T')[0]
+    return feedback.filter(f => (f.date || '').localeCompare(cutoffStr) >= 0)
+  }, [feedback, timeRange])
+
+  // Aggregated Dynamic KPIs
+  const totalFeedbackCount = filteredFeedback.length
   const activeFeaturesCount = features.filter(f => f.status === 'In Planning' || f.status === 'In Development').length
   const plannedFeaturesCount = features.filter(f => f.status === 'Backlog' || f.status === 'Evaluating').length
-  const positiveSentiment = feedback.filter(f => f.sentiment === 'Positive').length
-  const negativeSentiment = feedback.filter(f => f.sentiment === 'Negative').length
-  const neutralSentiment = feedback.filter(f => f.sentiment === 'Neutral').length
+  const positiveSentiment = filteredFeedback.filter(f => f.sentiment === 'Positive').length
+  const negativeSentiment = filteredFeedback.filter(f => f.sentiment === 'Negative').length
+  const neutralSentiment = filteredFeedback.filter(f => f.sentiment === 'Neutral').length
   const avgCSAT = totalFeedbackCount > 0
     ? (((positiveSentiment * 5 + neutralSentiment * 3 + negativeSentiment * 1) / (totalFeedbackCount * 5)) * 5).toFixed(1)
     : '4.2'
-  const urgentRequestsCount = feedback.filter(f => f.priority === 'Urgent').length
+  const urgentRequestsCount = filteredFeedback.filter(f => f.priority === 'Urgent').length
   const prdCount = prds.length
 
-  // Chart data: Feedback volume over time
-  const feedbackVolumeData = [
-    { date: 'Oct 01', Volume: 4, Urgent: 1 },
-    { date: 'Oct 05', Volume: 7, Urgent: 2 },
-    { date: 'Oct 09', Volume: 5, Urgent: 1 },
-    { date: 'Oct 13', Volume: 9, Urgent: 3 },
-    { date: 'Oct 17', Volume: 12, Urgent: 4 },
-    { date: 'Oct 21', Volume: 8, Urgent: 2 },
-  ]
+  // Dynamic Chart data: Feedback volume over time
+  const feedbackVolumeData = useMemo(() => {
+    const dailyMap = {}
+    filteredFeedback.forEach(f => {
+      const d = f.date ? f.date.slice(5) : 'Recent' // e.g., '10-15'
+      if (!dailyMap[d]) {
+        dailyMap[d] = { date: d, Volume: 0, Urgent: 0 }
+      }
+      dailyMap[d].Volume++
+      if (f.priority === 'Urgent') {
+        dailyMap[d].Urgent++
+      }
+    })
+    const entries = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date))
+    return entries.length > 0 ? entries : [
+      { date: 'Recent', Volume: totalFeedbackCount, Urgent: urgentRequestsCount }
+    ]
+  }, [filteredFeedback, totalFeedbackCount, urgentRequestsCount])
 
   // Chart data: Category breakdown
-  const categoryCounts = {}
-  feedback.forEach(f => {
-    categoryCounts[f.category] = (categoryCounts[f.category] || 0) + 1
-  })
-  const categoryChartData = Object.entries(categoryCounts).map(([name, count]) => ({
-    name,
-    count,
-  }))
+  const categoryChartData = useMemo(() => {
+    const categoryCounts = {}
+    filteredFeedback.forEach(f => {
+      categoryCounts[f.category] = (categoryCounts[f.category] || 0) + 1
+    })
+    return Object.entries(categoryCounts).map(([name, count]) => ({
+      name,
+      count,
+    }))
+  }, [filteredFeedback])
 
   const CATEGORY_COLORS = ['#8b5cf6', '#0ea5e9', '#10b981', '#f59e0b', '#f43f5e', '#6366f1', '#ec4899']
 
@@ -119,8 +140,11 @@ export function DashboardPage() {
     { name: 'Negative', value: negativeSentiment, color: '#f43f5e' },
   ]
 
-  // Top customer pain points
-  const customerPainPoints = feedback.filter(f => f.sentiment === 'Negative').slice(0, 4)
+  // Top customer pain points from active window
+  const customerPainPoints = useMemo(() => {
+    const negs = filteredFeedback.filter(f => f.sentiment === 'Negative')
+    return (negs.length > 0 ? negs : feedback.filter(f => f.sentiment === 'Negative')).slice(0, 4)
+  }, [filteredFeedback, feedback])
 
   // Top features sorted by priority score
   const sortedFeatures = [...features].sort((a, b) => b.score - a.score).slice(0, 4)
@@ -153,6 +177,11 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
+      {/* Demo / Live Status Banner */}
+      <DemoModeBanner
+        message="Executive Dashboard: Metrics and charts are dynamically derived from active workspace feedback and feature scores. Filter by date window to inspect real-time changes."
+      />
+
       {/* Executive Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
         <div>
