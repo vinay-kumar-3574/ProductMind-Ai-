@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import React, { useState, useEffect } from 'react'
+import { Link, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import {
   FileText,
@@ -24,6 +24,10 @@ import { prdService } from '../services/api/prdService'
 
 export function PRDGeneratorPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const location = useLocation()
+  const targetFeatureId = searchParams.get('featureId') || location.state?.featureId
+
   const {
     prds,
     features,
@@ -35,18 +39,43 @@ export function PRDGeneratorPage() {
     addToast,
   } = useApp()
 
-  const [activePRDId, setActivePRDId] = useState(() => prds[0]?.id || '')
+  const [activePRDId, setActivePRDId] = useState(() => {
+    if (targetFeatureId) {
+      const match = prds.find(p => p.featureId === targetFeatureId)
+      if (match) return match.id
+    }
+    return prds[0]?.id || ''
+  })
   const [isEditing, setIsEditing] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
 
   // Selection for generating from feature
-  const [selectedFeatureId, setSelectedFeatureId] = useState(features[0]?.id || '')
+  const [selectedFeatureId, setSelectedFeatureId] = useState(() => targetFeatureId || features[0]?.id || '')
   const [customTitle, setCustomTitle] = useState('')
 
   const activePRD = prds.find(p => p.id === activePRDId) || prds[0]
 
   // Draft editing state
   const [editableSections, setEditableSections] = useState(() => activePRD?.sections || {})
+
+  // Synchronize targetFeatureId from navigation state or URL
+  useEffect(() => {
+    if (targetFeatureId) {
+      setSelectedFeatureId(targetFeatureId)
+      const existingPRD = prds.find(p => p.featureId === targetFeatureId)
+      if (existingPRD) {
+        setActivePRDId(existingPRD.id)
+        setEditableSections(existingPRD.sections)
+        setIsEditing(false)
+      } else {
+        const feat = features.find(f => f.id === targetFeatureId)
+        if (feat) {
+          setCustomTitle(`${feat.name} Specification`)
+        }
+        setShowNewModal(true)
+      }
+    }
+  }, [targetFeatureId, prds, features])
 
   const handleSelectPRD = (id) => {
     setActivePRDId(id)
@@ -357,7 +386,12 @@ export function PRDGeneratorPage() {
             </label>
             <select
               value={selectedFeatureId}
-              onChange={e => setSelectedFeatureId(e.target.value)}
+              onChange={e => {
+                const val = e.target.value
+                setSelectedFeatureId(val)
+                const f = features.find(item => item.id === val)
+                if (f) setCustomTitle(`${f.name} Specification`)
+              }}
               className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
             >
               {features.map(f => (

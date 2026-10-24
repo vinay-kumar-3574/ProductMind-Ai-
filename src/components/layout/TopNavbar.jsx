@@ -41,19 +41,28 @@ export function TopNavbar({ onOpenSearch, onOpenCommandPalette }) {
   // Generate dynamic page title and breadcrumbs
   const getBreadcrumb = () => {
     const path = location.pathname
+    const search = new URLSearchParams(location.search)
+    const tab = search.get('tab')
+
     if (path === '/') return { title: 'Executive Dashboard', parent: 'Workspace' }
     if (path === '/analytics') return { title: 'Product Analytics & Ingestion', parent: 'Analytics' }
-    if (path === '/feedback') return { title: 'Feedback Explorer', parent: 'Intelligence' }
+    if (path === '/feedback') {
+      if (tab === 'insights') return { title: 'AI Insights & Clustering', parent: 'Intelligence' }
+      return { title: 'Feedback Explorer', parent: 'Intelligence' }
+    }
     if (path === '/aggregation') return { title: 'Feature Request Aggregation', parent: 'Product Decisions' }
-    if (path === '/insights') return { title: 'AI Insights', parent: 'Intelligence' }
-    if (path === '/personas') return { title: 'Customer Personas', parent: 'Intelligence' }
-    if (path === '/prioritization') return { title: 'Feature Prioritization', parent: 'Product Decisions' }
-    if (path === '/simulator') return { title: 'What-If Product Simulator', parent: 'Product Decisions' }
-    if (path === '/prd-generator') return { title: 'PRD Generator', parent: 'Specifications' }
-    if (path === '/roadmap') return { title: 'Product Roadmap', parent: 'Execution' }
-    if (path === '/experiments') return { title: 'Product Experiment Lab', parent: 'Execution' }
-    if (path === '/release-readiness') return { title: 'Release Readiness Center', parent: 'Governance' }
+    if (path === '/prioritization') {
+      if (tab === 'simulator') return { title: 'What-If Product Simulator', parent: 'Product Decisions' }
+      return { title: 'Feature Prioritization', parent: 'Product Decisions' }
+    }
+    if (path === '/prd-generator') return { title: 'PRD Studio', parent: 'Specifications' }
+    if (path === '/roadmap') {
+      if (tab === 'readiness') return { title: 'Release Readiness Center', parent: 'Governance' }
+      return { title: 'Product Roadmap', parent: 'Execution' }
+    }
     if (path === '/copilot') return { title: 'AI Copilot Assistant', parent: 'Intelligence' }
+    if (path === '/personas') return { title: 'Customer Personas', parent: 'Intelligence' }
+    if (path === '/experiments') return { title: 'Product Experiment Lab', parent: 'Execution' }
     if (path === '/competitors') return { title: 'Competitor Intelligence', parent: 'Market Research' }
     if (path === '/journey') return { title: 'Customer Journey Mapping', parent: 'Customer Experience' }
     if (path === '/reports') return { title: 'Reports & Analytics', parent: 'Executive' }

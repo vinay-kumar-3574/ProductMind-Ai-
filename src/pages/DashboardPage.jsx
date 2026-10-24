@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -24,7 +24,12 @@ import {
   Eye,
   EyeOff,
   RotateCcw,
+  FileSpreadsheet,
+  Printer,
+  Download,
+  BarChart3,
 } from 'lucide-react'
+import { exportFeedbackToCSV, exportFeaturesToCSV } from '../services/csvService'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -59,8 +64,34 @@ export function DashboardPage() {
     setDashboardLayout,
   } = useApp()
 
+  const [searchParams] = useSearchParams()
   const [timeRange, setTimeRange] = useState('30d')
   const [showCustomizeModal, setShowCustomizeModal] = useState(false)
+  const [showReportModal, setShowReportModal] = useState(() => searchParams.get('report') === 'true')
+
+  const handleExportFeedbackCSV = () => {
+    const csv = exportFeedbackToCSV(filteredFeedback)
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `feedback_dashboard_report_${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const handleExportFeaturesCSV = () => {
+    const csv = exportFeaturesToCSV(features)
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `feature_prioritization_report_${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
 
   // Dynamic greeting
   const getGreeting = () => {
@@ -220,6 +251,16 @@ export function DashboardPage() {
           >
             <Sliders className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Customize</span>
+          </button>
+
+          {/* Quick Action: Reports & Export */}
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold shadow-sm transition-all cursor-pointer"
+            title="Export data and view executive reports"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="hidden sm:inline">Reports & Export</span>
           </button>
 
           {/* Quick Action: Recruiter Demo */}
@@ -495,7 +536,7 @@ export function DashboardPage() {
             </div>
 
             <Link
-              to="/release-readiness"
+              to="/roadmap?tab=readiness"
               className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center justify-between"
             >
               <span>View Release Checklist</span>
@@ -551,7 +592,7 @@ export function DashboardPage() {
                 <Sparkles className="w-4 h-4 text-brand-500" />
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">Simulated AI Insights Feed</h3>
               </div>
-              <Link to="/insights" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
+              <Link to="/feedback?tab=insights" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
                 Analyze More
               </Link>
             </div>
@@ -635,6 +676,84 @@ export function DashboardPage() {
 
         <div className="mt-5 pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end">
           <Button onClick={() => setShowCustomizeModal(false)}>Done</Button>
+        </div>
+      </Modal>
+
+      {/* Reports & Export Modal */}
+      <Modal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        title="Reports & Executive Analytics Center"
+        subtitle="Download CSV datasets, export prioritization rankings, or print executive summaries"
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800">
+              <span className="text-[10px] text-slate-400 font-medium">Feedback</span>
+              <p className="text-base font-bold text-slate-900 dark:text-white mt-0.5">{totalFeedbackCount}</p>
+            </div>
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800">
+              <span className="text-[10px] text-slate-400 font-medium">Average CSAT</span>
+              <p className="text-base font-bold text-brand-600 dark:text-brand-400 mt-0.5">{avgCSAT} / 5</p>
+            </div>
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800">
+              <span className="text-[10px] text-slate-400 font-medium">Active Features</span>
+              <p className="text-base font-bold text-slate-900 dark:text-white mt-0.5">{activeFeaturesCount}</p>
+            </div>
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800">
+              <span className="text-[10px] text-slate-400 font-medium">Release Ready</span>
+              <p className="text-base font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">{readinessPercent}%</p>
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-navy-950/80 border border-slate-200/80 dark:border-slate-800/80 space-y-2.5">
+            <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Download className="w-3.5 h-3.5 text-brand-500" />
+              <span>Direct Data Exports</span>
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                icon={FileSpreadsheet}
+                onClick={handleExportFeedbackCSV}
+                className="justify-center"
+              >
+                Export Feedback CSV ({timeRange})
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={FileSpreadsheet}
+                onClick={handleExportFeaturesCSV}
+                className="justify-center"
+              >
+                Export Prioritization CSV
+              </Button>
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-navy-950/80 border border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between">
+            <div>
+              <h4 className="text-xs font-bold text-slate-900 dark:text-white">Printable Executive Report</h4>
+              <p className="text-[11px] text-slate-400 mt-0.5">Generate clean, print-formatted dashboard view</p>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={Printer}
+              onClick={() => {
+                setShowReportModal(false)
+                setTimeout(() => window.print(), 100)
+              }}
+            >
+              Print Summary
+            </Button>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+            <Button variant="secondary" onClick={() => setShowReportModal(false)}>Close</Button>
+          </div>
         </div>
       </Modal>
     </div>

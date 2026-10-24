@@ -26,7 +26,7 @@ export function GuidedTour() {
     {
       title: '2. Simulated AI Insights Feed',
       description: 'Trigger deterministic NLP clustering to identify recurring pain points, integration spikes, and enterprise churn risks before they escalate.',
-      targetPath: '/insights',
+      targetPath: '/feedback?tab=insights',
       highlight: 'AI Insights Workspace',
     },
     {
@@ -38,7 +38,7 @@ export function GuidedTour() {
     {
       title: '4. What-If Scenario Simulator',
       description: 'Test hypothetical resource trade-offs with interactive sliders and compare before-and-after ranking shifts without overwriting original feature scores.',
-      targetPath: '/simulator',
+      targetPath: '/prioritization?tab=simulator',
       highlight: 'What-If Comparison Sandbox',
     },
     {
@@ -50,7 +50,7 @@ export function GuidedTour() {
     {
       title: '6. Release Readiness Quality Gates',
       description: 'Ensure releases are not marked ready until all required compliance and security checklist gates pass.',
-      targetPath: '/release-readiness',
+      targetPath: '/roadmap?tab=readiness',
       highlight: 'Release Readiness Center',
     },
   ]

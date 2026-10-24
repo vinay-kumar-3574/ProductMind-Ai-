@@ -58,10 +58,10 @@ export default function App() {
                 <Route path="/feedback" element={<FeedbackPage />} />
                 <Route path="/aggregation" element={<AggregationPage />} />
                 <Route path="/feature-aggregation" element={<Navigate to="/aggregation" replace />} />
-                <Route path="/insights" element={<InsightsPage />} />
+                <Route path="/insights" element={<Navigate to="/feedback?tab=insights" replace />} />
                 <Route path="/personas" element={<PersonasPage />} />
                 <Route path="/prioritization" element={<PrioritizationPage />} />
-                <Route path="/simulator" element={<SimulatorPage />} />
+                <Route path="/simulator" element={<Navigate to="/prioritization?tab=simulator" replace />} />
 
                 {/* PRD Generator (support both /prd-generator and /prds) */}
                 <Route path="/prd-generator" element={<PRDGeneratorPage />} />
@@ -69,7 +69,7 @@ export default function App() {
 
                 <Route path="/roadmap" element={<RoadmapPage />} />
                 <Route path="/experiments" element={<ExperimentsPage />} />
-                <Route path="/release-readiness" element={<ReleaseReadinessPage />} />
+                <Route path="/release-readiness" element={<Navigate to="/roadmap?tab=readiness" replace />} />
                 <Route path="/copilot" element={<CopilotPage />} />
                 <Route path="/competitors" element={<CompetitorIntelPage />} />
 
@@ -77,7 +77,7 @@ export default function App() {
                 <Route path="/journey" element={<CustomerJourneyPage />} />
                 <Route path="/customer-journey" element={<Navigate to="/journey" replace />} />
 
-                <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/reports" element={<Navigate to="/?report=true" replace />} />
 
                 {/* Activity History & Audit (support both /history and /activity-history) */}
                 <Route path="/history" element={<ActivityHistoryPage />} />

@@ -124,10 +124,15 @@ export function AggregationPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link to="/feedback?tab=insights">
+            <Button variant="outline" size="sm" icon={Sparkles}>
+              AI Insights
+            </Button>
+          </Link>
           <Link to="/prioritization">
             <Button variant="secondary" size="sm" icon={SlidersHorizontal}>
-              View Prioritization Matrix
+              Prioritization Matrix
             </Button>
           </Link>
           <Link to="/feedback">

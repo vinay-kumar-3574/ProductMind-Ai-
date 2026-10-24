@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import {
   SlidersHorizontal,
@@ -23,12 +23,24 @@ import {
   Layers,
   Calculator,
   ExternalLink,
+  GitCompare,
 } from 'lucide-react'
 import { Card, Badge, Button, Modal, DemoModeBanner } from '../components/common'
 import { calculatePriorityScore, getScoreBreakdown, getPriorityTier, FACTOR_WEIGHTS } from '../data/scoringFormulas'
+import { SimulatorPage } from './SimulatorPage'
 
 export function PrioritizationPage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = searchParams.get('tab') === 'simulator' ? 'simulator' : 'matrix'
+
+  const handleTabChange = (tab) => {
+    if (tab === 'simulator') {
+      setSearchParams({ tab: 'simulator' })
+    } else {
+      setSearchParams({})
+    }
+  }
   const {
     features,
     feedback,
@@ -177,15 +189,55 @@ export function PrioritizationPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Feature Prioritization Matrix</h2>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20">
-              Formulaic Model
-            </span>
-          </div>
+      {/* Primary Workflow Sub-Tabs: Matrix vs Simulator */}
+      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          onClick={() => handleTabChange('matrix')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'matrix'
+              ? 'bg-brand-600 text-white shadow-sm'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+          <span>Prioritization Matrix</span>
+        </button>
+
+        <button
+          onClick={() => handleTabChange('simulator')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'simulator'
+              ? 'bg-brand-600 text-white shadow-sm'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <GitCompare className="w-4 h-4" />
+          <span>What-If Simulator</span>
+          <span
+            className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+              activeTab === 'simulator'
+                ? 'bg-white/20 text-white'
+                : 'bg-electric-500/10 text-electric-600 dark:text-electric-400 border border-electric-500/20'
+            }`}
+          >
+            Sandbox
+          </span>
+        </button>
+      </div>
+
+      {activeTab === 'simulator' ? (
+        <SimulatorPage />
+      ) : (
+        <>
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Feature Prioritization Matrix</h2>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20">
+                  Formulaic Model
+                </span>
+              </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono">
             Score = (0.35 × Impact) + (0.30 × Urgency) + (0.20 × Demand) + (0.15 × Business Value)
           </p>
@@ -373,11 +425,18 @@ export function PrioritizationPage() {
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
-                            onClick={() => navigate('/simulator')}
+                            onClick={() => handleTabChange('simulator')}
                             className="p-1 text-slate-400 hover:text-electric-500 rounded-md"
                             title="Simulate in What-If Sandbox"
                           >
                             <TrendingUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => navigate(`/prd-generator?featureId=${feat.id}`, { state: { featureId: feat.id } })}
+                            className="p-1 text-slate-400 hover:text-brand-600 rounded-md"
+                            title="Generate PRD"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleOpenEdit(feat)}
@@ -498,6 +557,14 @@ export function PrioritizationPage() {
                     <Badge variant="brand">{feat.targetRelease}</Badge>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => navigate(`/prd-generator?featureId=${feat.id}`, { state: { featureId: feat.id } })}
+                      className="text-slate-500 hover:text-brand-600 flex items-center gap-1"
+                      title="Generate PRD"
+                    >
+                      <FileText className="w-3 h-3" />
+                      <span>PRD</span>
+                    </button>
                     <button onClick={() => setInspectingFeature(feat)} className="text-brand-600 dark:text-brand-400 hover:underline">
                       Details
                     </button>
@@ -816,8 +883,9 @@ export function PrioritizationPage() {
                 size="xs"
                 icon={FileText}
                 onClick={() => {
+                  const featId = inspectingFeature.id
                   setInspectingFeature(null)
-                  navigate('/prd-generator')
+                  navigate(`/prd-generator?featureId=${featId}`, { state: { featureId: featId } })
                 }}
               >
                 Generate PRD
@@ -826,6 +894,8 @@ export function PrioritizationPage() {
             </div>
           </div>
         </Modal>
+      )}
+        </>
       )}
     </div>
   )

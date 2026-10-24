@@ -5,20 +5,12 @@ import {
   LayoutDashboard,
   MessageSquareText,
   Sparkles,
-  Users,
   SlidersHorizontal,
-  GitCompare,
   FileText,
   Milestone,
-  FlaskConical,
-  ShieldCheck,
   BotMessageSquare,
-  Crosshair,
-  Route,
-  BarChart3,
   TrendingUp,
   Layers,
-  History,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -34,20 +26,10 @@ export function Sidebar({ collapsed, setCollapsed }) {
     { name: 'Product Analytics', path: '/analytics', icon: TrendingUp, badge: 'Data' },
     { name: 'Feedback Explorer', path: '/feedback', icon: MessageSquareText },
     { name: 'Feature Aggregation', path: '/aggregation', icon: Layers, badge: 'New' },
-    { name: 'AI Insights', path: '/insights', icon: Sparkles, badge: 'AI' },
-    { name: 'Customer Personas', path: '/personas', icon: Users },
     { name: 'Prioritization', path: '/prioritization', icon: SlidersHorizontal },
-    { name: 'What-If Simulator', path: '/simulator', icon: GitCompare, badge: 'Sim' },
-    { name: 'PRD Generator', path: '/prd-generator', icon: FileText },
+    { name: 'PRD Studio', path: '/prd-generator', icon: FileText },
     { name: 'Roadmap', path: '/roadmap', icon: Milestone },
-    { name: 'Product Experiments', path: '/experiments', icon: FlaskConical },
-    { name: 'Release Readiness', path: '/release-readiness', icon: ShieldCheck },
     { name: 'AI Copilot', path: '/copilot', icon: BotMessageSquare, badge: 'Live' },
-    { name: 'Competitor Intelligence', path: '/competitors', icon: Crosshair },
-    { name: 'Customer Journey', path: '/journey', icon: Route },
-    { name: 'Reports', path: '/reports', icon: BarChart3 },
-    { name: 'Activity History', path: '/history', icon: History },
-    { name: 'Settings', path: '/settings', icon: Settings },
   ]
 
   return (
@@ -140,8 +122,27 @@ export function Sidebar({ collapsed, setCollapsed }) {
         })}
       </nav>
 
-      {/* User profile & sign-out bottom pill */}
-      <div className="p-3 border-t border-slate-200 dark:border-slate-800/80">
+      {/* Settings link & User profile bottom pill */}
+      <div className="p-3 border-t border-slate-200 dark:border-slate-800/80 space-y-2">
+        <NavLink
+          to="/settings"
+          className={({ isActive }) =>
+            `group relative flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150 ${
+              isActive
+                ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/70 dark:text-brand-300 font-semibold shadow-sm border border-brand-200/60 dark:border-brand-800/50'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200'
+            }`
+          }
+        >
+          <Settings className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+          {!collapsed && <span className="truncate">Settings</span>}
+          {collapsed && (
+            <div className="absolute left-full ml-3 px-2.5 py-1 bg-slate-900 text-white text-xs rounded-md shadow-xl whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50">
+              Settings
+            </div>
+          )}
+        </NavLink>
+
         <div className="flex items-center justify-between gap-2 p-1.5 rounded-xl bg-slate-50 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/60">
           <div className="flex items-center gap-2.5 truncate">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-600 to-electric-600 flex items-center justify-center text-white text-xs font-bold shrink-0">

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import {
   Search,
@@ -24,13 +24,26 @@ import {
   Eye,
   Layers,
   ExternalLink,
+  MessageSquareText,
 } from 'lucide-react'
 import { Card, Badge, Button, Modal, DemoModeBanner, AIClassificationCard } from '../components/common'
 import { generateSmartTags, detectDuplicates, analyzeSentiment, predictCategory } from '../services/aiSimulationService'
 import { parseFeedbackCSV, generateSampleCSV, exportFeedbackToCSV } from '../services/csvService'
+import { InsightsPage } from './InsightsPage'
 
 export function FeedbackPage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = searchParams.get('tab') === 'insights' ? 'insights' : 'feedback'
+
+  const handleTabChange = (tab) => {
+    if (tab === 'insights') {
+      setSearchParams({ tab: 'insights' })
+    } else {
+      setSearchParams({})
+    }
+  }
+
   const {
     feedback,
     features,
@@ -312,18 +325,58 @@ export function FeedbackPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Demo / Live Status Banner */}
-      <DemoModeBanner
-        message="Displaying sample feedback intelligence with deterministic sentiment, smart tagging, and duplicate detection. Connected to local workspace store."
-      />
+      {/* Primary Workflow Sub-Tabs: Feedback Triage vs AI Insights */}
+      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          onClick={() => handleTabChange('feedback')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'feedback'
+              ? 'bg-brand-600 text-white shadow-sm'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <MessageSquareText className="w-4 h-4" />
+          <span>Feedback Records & Triage</span>
+        </button>
 
-      {/* Header bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Customer Feedback Explorer</h2>
-            <Badge variant="brand">Intelligence Corpus</Badge>
-          </div>
+        <button
+          onClick={() => handleTabChange('insights')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'insights'
+              ? 'bg-brand-600 text-white shadow-sm'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>AI Insights & Clustering</span>
+          <span
+            className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+              activeTab === 'insights'
+                ? 'bg-white/20 text-white'
+                : 'bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20'
+            }`}
+          >
+            NLP Intelligence
+          </span>
+        </button>
+      </div>
+
+      {activeTab === 'insights' ? (
+        <InsightsPage />
+      ) : (
+        <>
+          {/* Demo / Live Status Banner */}
+          <DemoModeBanner
+            message="Displaying sample feedback intelligence with deterministic sentiment, smart tagging, and duplicate detection. Connected to local workspace store."
+          />
+
+          {/* Header bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Customer Feedback Explorer</h2>
+                <Badge variant="brand">Intelligence Corpus</Badge>
+              </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Manage qualitative user sentiment, duplicate detection, smart tagging, and feature linking
           </p>
@@ -1060,8 +1113,13 @@ export function FeedbackPage() {
                   size="xs"
                   icon={ExternalLink}
                   onClick={() => {
+                    const linkedId = inspectingFeedbackItem.linkedFeatureId
                     setInspectingFeedbackItem(null)
-                    navigate('/prd-generator')
+                    if (linkedId) {
+                      navigate(`/prd-generator?featureId=${linkedId}`, { state: { featureId: linkedId } })
+                    } else {
+                      navigate('/prd-generator')
+                    }
                   }}
                 >
                   Specifications (PRDs)
@@ -1080,6 +1138,8 @@ export function FeedbackPage() {
             </div>
           </div>
         </Modal>
+      )}
+        </>
       )}
     </div>
   )

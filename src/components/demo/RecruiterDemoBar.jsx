@@ -36,7 +36,7 @@ export function RecruiterDemoBar() {
     {
       title: 'Step 2: Synthesize AI Insights',
       description: 'Run the simulated AI analysis. The NLP engine detects a high-urgency Performance cluster and recommends building a Virtualized Data Grid.',
-      targetPath: '/insights',
+      targetPath: '/feedback?tab=insights',
       actionLabel: 'Analyze AI Insights',
     },
     {
@@ -48,7 +48,7 @@ export function RecruiterDemoBar() {
     {
       title: 'Step 4: What-If Trade-Off Simulation',
       description: 'Open the What-If Simulator sandbox. Adjust Urgency to 10 and Impact to 10 to simulate how the Virtual Grid jumps to Rank #1 before committing changes.',
-      targetPath: '/simulator',
+      targetPath: '/prioritization?tab=simulator',
       actionLabel: 'Test What-If Sandbox',
     },
     {
@@ -66,7 +66,7 @@ export function RecruiterDemoBar() {
     {
       title: 'Step 7: Audit Release Readiness Quality Gates',
       description: 'Check Release v2.4.0. The release is currently blocked (NO-GO) because 2 required quality checklist gates remain unverified.',
-      targetPath: '/release-readiness',
+      targetPath: '/roadmap?tab=readiness',
       actionLabel: 'Audit Release Gates',
     },
     {
