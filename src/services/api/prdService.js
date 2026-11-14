@@ -37,6 +37,10 @@ export function normalizePlanSections(rawSections = {}) {
 export function normalizePlan(plan) {
   if (!plan) return null
   const id = plan.planning_id || plan.id || plan._id
+  const userStories = Array.isArray(plan.user_stories)
+    ? plan.user_stories
+    : (Array.isArray(plan.userStories) ? plan.userStories : [])
+
   return {
     ...plan,
     id,
@@ -47,6 +51,13 @@ export function normalizePlan(plan) {
     status: plan.status || 'draft',
     author: plan.author || 'Product Manager',
     sections: normalizePlanSections(plan.sections),
+    user_stories: userStories,
+    userStories: userStories,
+    technical_requirements: plan.technical_requirements || plan.technicalRequirements || [],
+    success_metrics: plan.success_metrics || plan.successMetrics || [],
+    risk_analysis: plan.risk_analysis || plan.riskAnalysis || [],
+    roadmap_recommendations: plan.roadmap_recommendations || plan.roadmapRecommendations || [],
+    supporting_evidence: plan.supporting_evidence || plan.supportingEvidence || [],
     createdAt: plan.created_at || plan.createdAt || new Date().toISOString(),
     updatedAt: plan.updated_at || plan.updatedAt || new Date().toISOString(),
     reviewNotes: plan.review_notes || plan.reviewNotes || null,
@@ -164,7 +175,7 @@ export const prdService = {
       sections,
       ...(title ? { title } : {}),
       ...(structuredPrd ? { structuredPrd } : {}),
-      ...(userStories ? { userStories } : {}),
+      ...(userStories !== null && userStories !== undefined ? { userStories } : {}),
       ...(forceApprovedOverwrite !== undefined ? { forceApprovedOverwrite } : {}),
       ...(versionBump ? { versionBump } : {}),
       ...(expectedVersion ? { expectedVersion } : {}),

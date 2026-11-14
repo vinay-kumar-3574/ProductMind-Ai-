@@ -26,10 +26,17 @@ import {
   RefreshCw,
   MessageSquare,
   ShieldCheck,
+  ListChecks,
 } from 'lucide-react'
 import { Card, Badge, Button, Modal } from '../components/common'
 import { prdService, normalizePlanSections } from '../services/api/prdService'
 import { useWorkspace } from '../context/WorkspaceContext'
+import UserStoryStudio from '../components/planning/UserStoryStudio'
+import {
+  parseTextToStories,
+  formatStoriesToText,
+  formatCriteriaToText,
+} from '../components/planning/storyHelpers'
 
 export function PRDGeneratorPage() {
   const navigate = useNavigate()
@@ -58,6 +65,10 @@ export function PRDGeneratorPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [conflictError, setConflictError] = useState(null)
+
+  // Structured User Stories state
+  const [structuredStories, setStructuredStories] = useState([])
+  const [isSavingStories, setIsSavingStories] = useState(false)
 
   // Section regeneration state
   const [isRegeneratingSection, setIsRegeneratingSection] = useState(null)
@@ -101,12 +112,36 @@ export function PRDGeneratorPage() {
   const isRejected = normalizedStatus === 'rejected'
   const isDraft = normalizedStatus === 'draft'
 
+  // Extract structured stories from a plan document
+  const extractStories = useCallback((plan) => {
+    if (!plan) return []
+    if (Array.isArray(plan.user_stories) && plan.user_stories.length > 0) {
+      return plan.user_stories
+    }
+    if (Array.isArray(plan.userStories) && plan.userStories.length > 0) {
+      return plan.userStories
+    }
+    return parseTextToStories(plan.sections?.userStories, plan.sections?.acceptanceCriteria)
+  }, [])
+
+  // Synchronize text sections whenever structured stories are updated
+  const syncSectionsFromStories = useCallback((stories) => {
+    const textStories = formatStoriesToText(stories)
+    const textAC = formatCriteriaToText(stories)
+    setEditableSections(prev => ({
+      ...prev,
+      userStories: textStories,
+      acceptanceCriteria: textAC,
+    }))
+  }, [])
+
   // Fetch plans from MongoDB Atlas with workspace switch and stale response protection
   const loadWorkspacePlans = useCallback(async (preferredPlanId = null) => {
     const wsId = currentWorkspace?.id
     if (!wsId) {
       setPlans([])
       setActivePlan(null)
+      setStructuredStories([])
       setEditableSections({})
       setIsLoadingPlans(false)
       setPlansError(null)
@@ -138,11 +173,13 @@ export function PRDGeneratorPage() {
         }
         setSelectedPlanId(target.id)
         setActivePlan(target)
+        setStructuredStories(extractStories(target))
         setEditableSections(target.sections || {})
         setIsEditing(false)
       } else {
         setSelectedPlanId(null)
         setActivePlan(null)
+        setStructuredStories([])
         setEditableSections({})
         setIsEditing(false)
       }
@@ -150,11 +187,12 @@ export function PRDGeneratorPage() {
       setPlansError(err.message || 'Failed to load product plans from MongoDB Atlas.')
       setPlans([])
       setActivePlan(null)
+      setStructuredStories([])
       setEditableSections({})
     } finally {
       setIsLoadingPlans(false)
     }
-  }, [currentWorkspace?.id, targetFeatureId, selectedPlanId])
+  }, [currentWorkspace?.id, targetFeatureId, selectedPlanId, extractStories])
 
   // Refetch when workspace changes or on mount
   useEffect(() => {
@@ -164,6 +202,7 @@ export function PRDGeneratorPage() {
     if (!wsId) {
       setPlans([])
       setActivePlan(null)
+      setStructuredStories([])
       setEditableSections({})
       setIsLoadingPlans(false)
       setPlansError(null)
@@ -189,13 +228,14 @@ export function PRDGeneratorPage() {
           }
           setSelectedPlanId(target.id)
           setActivePlan(target)
+          setStructuredStories(extractStories(target))
           setEditableSections(target.sections || {})
           setIsEditing(false)
         } else {
           setSelectedPlanId(null)
           setActivePlan(null)
+          setStructuredStories([])
           setEditableSections({})
-          setIsEditing(false)
         }
       })
       .catch(err => {
@@ -203,6 +243,7 @@ export function PRDGeneratorPage() {
         setPlansError(err.message || 'Failed to load product plans from MongoDB Atlas.')
         setPlans([])
         setActivePlan(null)
+        setStructuredStories([])
         setEditableSections({})
       })
       .finally(() => {
@@ -214,7 +255,7 @@ export function PRDGeneratorPage() {
     return () => {
       isCancelled = true
     }
-  }, [currentWorkspace?.id])
+  }, [currentWorkspace?.id, extractStories])
 
   // Select a PRD and load its full details
   const handleSelectPlan = async (plan) => {
@@ -228,10 +269,11 @@ export function PRDGeneratorPage() {
     try {
       const detail = await prdService.getProductPlan(plan.id, currentWorkspace?.id)
       setActivePlan(detail)
+      setStructuredStories(extractStories(detail))
       setEditableSections(detail.sections || {})
     } catch {
-      // Fallback to list-level data if detail endpoint fails
       setActivePlan(plan)
+      setStructuredStories(extractStories(plan))
       setEditableSections(plan.sections || {})
     } finally {
       setIsLoadingDetail(false)
@@ -261,6 +303,7 @@ export function PRDGeneratorPage() {
       setPlans(prev => [plan, ...prev.filter(p => p.id !== plan.id)])
       setSelectedPlanId(plan.id)
       setActivePlan(plan)
+      setStructuredStories(extractStories(plan))
       setEditableSections(plan.sections || {})
       setIsEditing(false)
       setShowNewModal(false)
@@ -271,6 +314,54 @@ export function PRDGeneratorPage() {
       addToast(err?.message || 'Failed to generate PRD', 'error')
     } finally {
       setIsGenerating(false)
+    }
+  }
+
+  // Handle updates to user stories from UserStoryStudio
+  const handleStoriesChange = (updatedStories) => {
+    setStructuredStories(updatedStories)
+    syncSectionsFromStories(updatedStories)
+  }
+
+  // Save structured user stories & criteria to Atlas
+  const handleSaveStories = async (storiesToSave = structuredStories) => {
+    if (!activePlan) return
+    if (isApproved) {
+      addToast('Cannot modify an approved PRD. Modifications are protected.', 'warning')
+      return
+    }
+
+    setIsSavingStories(true)
+    setSaveError(null)
+    setConflictError(null)
+
+    try {
+      const updated = await prdService.updatePRDSections(activePlan.id, {
+        sections: editableSections,
+        userStories: storiesToSave,
+        expectedVersion: activePlan.version,
+        versionBump: 'patch',
+        workspaceId: currentWorkspace?.id,
+      })
+
+      setActivePlan(updated)
+      setStructuredStories(extractStories(updated))
+      setEditableSections(updated.sections || {})
+      setPlans(prev => prev.map(p => (p.id === updated.id ? updated : p)))
+      setIsEditing(false)
+      addToast(`User stories and acceptance criteria saved to Atlas (v${updated.version})!`, 'success')
+    } catch (err) {
+      if (err.status === 409 || err.message?.includes('409') || err.message?.toLowerCase().includes('concurrent')) {
+        setConflictError(
+          `Version conflict: This PRD has been updated in another session (current database version differs from expected v${activePlan.version}). Please reload the document.`
+        )
+        addToast('Concurrency Conflict: Version mismatch. Please reload.', 'error')
+      } else {
+        setSaveError(err.message || 'Failed to save user stories to MongoDB Atlas.')
+        addToast(err.message || 'Failed to save user stories.', 'error')
+      }
+    } finally {
+      setIsSavingStories(false)
     }
   }
 
@@ -300,12 +391,14 @@ export function PRDGeneratorPage() {
 
       const updated = await prdService.updatePRDSections(activePlan.id, {
         sections: payloadSections,
+        userStories: structuredStories,
         expectedVersion: activePlan.version,
         versionBump: 'patch',
         workspaceId: currentWorkspace?.id,
       })
 
       setActivePlan(updated)
+      setStructuredStories(extractStories(updated))
       setEditableSections(updated.sections || {})
       setPlans(prev => prev.map(p => (p.id === updated.id ? updated : p)))
       setIsEditing(false)
@@ -348,7 +441,6 @@ export function PRDGeneratorPage() {
         workspaceId: currentWorkspace?.id,
       })
 
-      // Update only the targeted section, preserving any unsaved edits in other sections!
       const newSecs = updated.sections || {}
       const regeneratedContent = newSecs[sectionKey] || ''
       setEditableSections(prev => ({
@@ -356,7 +448,11 @@ export function PRDGeneratorPage() {
         [sectionKey]: regeneratedContent,
       }))
 
-      // Update active plan and list version
+      if (sectionKey === 'userStories' || sectionKey === 'user_stories') {
+        const regeneratedStories = extractStories(updated)
+        setStructuredStories(regeneratedStories)
+      }
+
       setActivePlan(updated)
       setPlans(prev => prev.map(p => (p.id === updated.id ? updated : p)))
       setRegenerateModal(null)
@@ -709,6 +805,7 @@ export function PRDGeneratorPage() {
                       size="sm"
                       onClick={() => {
                         setEditableSections(activePlan.sections || {})
+                        setStructuredStories(extractStories(activePlan))
                         setIsEditing(false)
                         setSaveError(null)
                         setConflictError(null)
@@ -804,6 +901,155 @@ export function PRDGeneratorPage() {
               <div className="space-y-6">
                 {sectionsConfig.map(({ key, title }) => {
                   const isRegeneratingThis = isRegeneratingSection === key
+
+                  // Section 9: Interactive User Story Studio
+                  if (key === 'userStories') {
+                    return (
+                      <div
+                        key={key}
+                        className="p-4 rounded-xl bg-slate-50/60 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80 transition-all space-y-4"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+                              {title}
+                            </h3>
+                            {isRegeneratingThis && (
+                              <span className="inline-flex items-center gap-1 text-[10px] text-brand-500 font-semibold">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Regenerating with Groq...
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleOpenRegenerate(key, title)}
+                              disabled={isApproved || Boolean(isRegeneratingSection)}
+                              className="text-[10px] text-slate-400 hover:text-brand-500 disabled:opacity-40 disabled:hover:text-slate-400 flex items-center gap-1 cursor-pointer"
+                              title={isApproved ? 'Section regeneration disabled on approved PRD' : `Regenerate ${title} with AI`}
+                            >
+                              <Sparkles className="w-3 h-3 text-brand-500" />
+                              <span>Regenerate</span>
+                            </button>
+
+                            <button
+                              onClick={() => copySection(title, editableSections[key] || '')}
+                              className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
+                            >
+                              <Copy className="w-3 h-3" />
+                              <span>Copy</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <UserStoryStudio
+                          stories={structuredStories}
+                          isApproved={isApproved}
+                          isSaving={isSavingStories}
+                          onSaveStories={handleSaveStories}
+                          onChangeStories={handleStoriesChange}
+                          onRegenerate={() => handleOpenRegenerate(key, title)}
+                        />
+
+                        {/* Collapsible Raw Markdown Spec for Section 9 */}
+                        <details className="pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400">
+                          <summary className="cursor-pointer hover:text-brand-500 font-semibold select-none">
+                            View Markdown Spec (Section 9)
+                          </summary>
+                          <pre className="mt-2 p-2.5 rounded-lg bg-white dark:bg-navy-950 border border-slate-200 dark:border-slate-800 font-mono text-[10px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap overflow-x-auto">
+                            {editableSections[key] || ''}
+                          </pre>
+                        </details>
+                      </div>
+                    )
+                  }
+
+                  // Section 10: Aggregated Acceptance Criteria Traceability
+                  if (key === 'acceptanceCriteria') {
+                    const totalCriteria = structuredStories.reduce(
+                      (acc, s) => acc + (s.acceptance_criteria?.length || 0),
+                      0
+                    )
+
+                    return (
+                      <div
+                        key={key}
+                        className="p-4 rounded-xl bg-slate-50/60 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+                              {title}
+                            </h3>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                              {totalCriteria} Given-When-Then Criteria
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleOpenRegenerate(key, title)}
+                              disabled={isApproved || Boolean(isRegeneratingSection)}
+                              className="text-[10px] text-slate-400 hover:text-brand-500 disabled:opacity-40 disabled:hover:text-slate-400 flex items-center gap-1 cursor-pointer"
+                              title={isApproved ? 'Section regeneration disabled on approved PRD' : `Regenerate ${title} with AI`}
+                            >
+                              <Sparkles className="w-3 h-3 text-brand-500" />
+                              <span>Regenerate</span>
+                            </button>
+
+                            <button
+                              onClick={() => copySection(title, editableSections[key] || '')}
+                              className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
+                            >
+                              <Copy className="w-3 h-3" />
+                              <span>Copy</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
+                          Acceptance criteria are managed directly within their parent user stories above to guarantee traceability and independent testability.
+                        </p>
+
+                        {totalCriteria > 0 ? (
+                          <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                            {structuredStories
+                              .filter(s => Array.isArray(s.acceptance_criteria) && s.acceptance_criteria.length > 0)
+                              .map(s => (
+                                <div
+                                  key={s.story_id}
+                                  className="p-2.5 rounded-lg bg-white dark:bg-navy-900 border border-slate-200 dark:border-slate-800 text-xs"
+                                >
+                                  <span className="font-mono font-bold text-brand-600 dark:text-brand-400 block mb-1">
+                                    [{s.story_id}] {s.title}
+                                  </span>
+                                  <div className="pl-2 border-l border-brand-500/30 space-y-1">
+                                    {s.acceptance_criteria.map(ac => (
+                                      <div key={ac.criterion_id} className="text-slate-700 dark:text-slate-300">
+                                        <span className="font-mono font-bold text-[10px] text-slate-500 mr-1.5">
+                                          [{ac.criterion_id}]
+                                        </span>
+                                        <span className="font-semibold text-brand-500">
+                                          ({ac.scenario_type || 'positive'})
+                                        </span>{' '}
+                                        {ac.description}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-slate-400 italic">
+                            No acceptance criteria defined yet. Expand any user story in the Studio above and click "+ Add Acceptance Criterion".
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+
+                  // Default 11 Sections
                   return (
                     <div
                       key={key}
@@ -955,7 +1201,7 @@ export function PRDGeneratorPage() {
       >
         <div className="space-y-4">
           <p className="text-xs text-slate-600 dark:text-slate-300">
-            You are regenerating <strong className="text-brand-600 dark:text-brand-400">{regenerateModal?.title}</strong>. All other 12 sections and existing edits will remain completely untouched.
+            You are regenerating <strong className="text-brand-600 dark:text-brand-400">{regenerateModal?.title}</strong>. All other sections and existing edits will remain completely untouched.
           </p>
 
           <div>
