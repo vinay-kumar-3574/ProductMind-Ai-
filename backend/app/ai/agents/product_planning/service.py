@@ -239,10 +239,11 @@ class ProductPlanningService:
             return
 
         # Active membership check
-        membership = await self.membership_repo.find_by_workspace_and_user(
-            workspace_id=ws_oid,
-            user_id=user.id,
-        )
+        membership = None
+        if hasattr(self.membership_repo, "find_membership"):
+            membership = await self.membership_repo.find_membership(ws_oid, user.id)
+        elif hasattr(self.membership_repo, "find_by_workspace_and_user"):
+            membership = await self.membership_repo.find_by_workspace_and_user(workspace_id=ws_oid, user_id=user.id)
         if not membership or membership.status != MembershipStatus.ACTIVE:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

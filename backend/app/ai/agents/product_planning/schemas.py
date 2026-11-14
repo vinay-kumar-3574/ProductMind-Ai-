@@ -7,7 +7,7 @@ technical requirements, success metrics, risk analysis, and roadmap recommendati
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 
 
 class RequirementOrigin(str, Enum):
@@ -380,6 +380,22 @@ class RoadmapPhase(BaseModel):
     deliverables: List[str] = Field(default_factory=list, description="Tangible artifacts and deployed features")
     suggested_sequencing: int = Field(default=1, ge=1, description="Numerical order of execution")
     risks: List[str] = Field(default_factory=list, description="Phase-specific execution risks")
+
+    @field_validator("suggested_sequencing", mode="before")
+    @classmethod
+    def parse_sequencing(cls, v: Any) -> int:
+        if isinstance(v, int):
+            return max(1, v)
+        if isinstance(v, str):
+            import re
+            m = re.search(r"\d+", v)
+            if m:
+                try:
+                    return max(1, int(m.group(0)))
+                except ValueError:
+                    return 1
+            return 1
+        return 1
 
 
 # ---------------------------------------------------------------------------

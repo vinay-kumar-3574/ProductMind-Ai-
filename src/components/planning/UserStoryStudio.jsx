@@ -21,8 +21,8 @@ export function UserStoryStudio({
   stories = [],
   isApproved = false,
   isSaving = false,
-  onSaveStories = () => {},
-  onChangeStories = () => {},
+  onSaveStories = () => { },
+  onChangeStories = () => { },
   onRegenerate = null,
 }) {
   const [isAdding, setIsAdding] = useState(false)
