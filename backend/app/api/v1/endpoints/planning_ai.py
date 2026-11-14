@@ -15,6 +15,8 @@ from app.ai.agents.product_planning import (
     GeneratePRDRequest,
     GenerateUserStoriesRequest,
     ReviewPlanRequest,
+    UpdatePRDSectionsRequest,
+    RegenerateSectionRequest,
     ProductPlanResponse,
 )
 from app.ai.exceptions import (
@@ -290,4 +292,74 @@ async def update_plan_review_status(
     except Exception as exc:
         logger.exception("Error updating review status for plan '%s': %s", planning_id, exc)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error updating review status.")
+
+
+@router.put(
+    "/{planning_id}/sections",
+    status_code=status.HTTP_200_OK,
+    summary="Update PRD Sections and Persist to Atlas",
+    description="Updates individual or multiple PRD sections directly in MongoDB Atlas while preserving structured fields and approved protection.",
+    response_model=ProductPlanResponse,
+)
+async def update_prd_sections(
+    planning_id: str,
+    payload: UpdatePRDSectionsRequest,
+    workspace_id: Optional[str] = Query(None, description="Optional workspace ID verification"),
+    current_user: User = Depends(get_current_user),
+    service: ProductPlanningService = Depends(get_product_planning_service),
+) -> ProductPlanResponse:
+    """Updates PRD sections with Atlas persistence, approved protection, and versioning."""
+    try:
+        return await service.update_sections(
+            planning_id=planning_id,
+            request=payload,
+            user=current_user,
+            workspace_id=workspace_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error updating PRD sections for plan '%s': %s", planning_id, exc)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error updating PRD sections.")
+
+
+@router.post(
+    "/{planning_id}/regenerate-section",
+    status_code=status.HTTP_200_OK,
+    summary="Regenerate Specific PRD Section",
+    description="Regenerates a single specific PRD section using bounded Groq inference while preserving all other sections.",
+    response_model=ProductPlanResponse,
+)
+async def regenerate_prd_section(
+    planning_id: str,
+    payload: RegenerateSectionRequest,
+    workspace_id: Optional[str] = Query(None, description="Optional workspace ID verification"),
+    current_user: User = Depends(get_current_user),
+    service: ProductPlanningService = Depends(get_product_planning_service),
+) -> ProductPlanResponse:
+    """Regenerates a single PRD section with zero-fabrication and origin verification."""
+    try:
+        return await service.regenerate_section(
+            planning_id=planning_id,
+            request=payload,
+            user=current_user,
+            workspace_id=workspace_id,
+        )
+    except HTTPException:
+        raise
+    except AIAuthenticationException as exc:
+        logger.error("Planning AI auth error: %s", exc)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="AI authentication failed.")
+    except AIRateLimitException as exc:
+        logger.warning("Planning AI rate limit: %s", exc)
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="AI rate limit reached.")
+    except AITimeoutException as exc:
+        logger.warning("Planning AI timeout: %s", exc)
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="AI request timed out.")
+    except (AIConfigurationException, AIProviderException, AIServiceException) as exc:
+        logger.error("Planning AI provider/service error: %s", exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI service failure: {exc}")
+    except Exception as exc:
+        logger.exception("Error regenerating PRD section for plan '%s': %s", planning_id, exc)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error regenerating PRD section.")
 

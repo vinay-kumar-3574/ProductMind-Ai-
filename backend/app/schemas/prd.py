@@ -6,6 +6,11 @@ from typing import Optional, Dict
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 from app.core.enums import PRDStatus
+from app.ai.agents.product_planning.schemas import (
+    UpdatePRDSectionsRequest,
+    RegenerateSectionRequest,
+    ProductPlanResponse,
+)
 
 
 class PRDCreate(BaseModel):

@@ -19,6 +19,8 @@ from app.ai.agents.product_planning import (
     GeneratePRDRequest,
     GenerateUserStoriesRequest,
     ReviewPlanRequest,
+    UpdatePRDSectionsRequest,
+    RegenerateSectionRequest,
     ProductPlanResponse,
     ProductRequirementsDocument,
     UserStory,
@@ -369,4 +371,184 @@ def test_generate_plan_provider_error(mock_auth_user):
         json={"workspace_id": MOCK_WS_ID, "feature_group_id": MOCK_GROUP_ID},
     )
     assert resp.status_code == status.HTTP_502_BAD_GATEWAY
+
+
+def test_update_sections_unauthenticated():
+    mock_db = MagicMock()
+    app.dependency_overrides[get_mongo_db] = lambda: mock_db
+    resp = client.put(
+        f"/api/v1/ai/planning/{MOCK_PLAN_ID}/sections",
+        json={"sections": {"overview": "Updated overview"}},
+    )
+    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_update_sections_success(mock_auth_user, sample_plan_response):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.update_sections = AsyncMock(return_value=sample_plan_response)
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {
+        "sections": {
+            "overview": "Revised Executive Summary for CSV Engine",
+            "problemStatement": "Revised problem statement",
+        },
+        "versionBump": "patch",
+    }
+    resp = client.put(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/sections", json=payload)
+    assert resp.status_code == status.HTTP_200_OK
+    data = resp.json()
+    assert data["planning_id"] == MOCK_PLAN_ID
+    assert data["title"] == "Automated CSV Export Engine"
+    mock_service.update_sections.assert_awaited_once()
+
+
+def test_update_sections_partial_and_preservation(mock_auth_user, sample_plan_response):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.update_sections = AsyncMock(return_value=sample_plan_response)
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    # Update only 1 single section
+    payload = {
+        "sections": {
+            "problem_statement": "Only problem statement is changed.",
+        }
+    }
+    resp = client.put(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/sections", json=payload)
+    assert resp.status_code == status.HTTP_200_OK
+    mock_service.update_sections.assert_awaited_once()
+
+
+def test_update_sections_invalid_keys(mock_auth_user):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.update_sections = AsyncMock(
+        side_effect=HTTPException(status_code=400, detail="Invalid section key(s): ['unknown_bogus_section'].")
+    )
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {
+        "sections": {
+            "unknown_bogus_section": "Invalid section payload",
+        }
+    }
+    resp = client.put(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/sections", json=payload)
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Invalid section key" in resp.json()["detail"]
+
+
+def test_update_sections_approved_protection(mock_auth_user):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.update_sections = AsyncMock(
+        side_effect=HTTPException(status_code=400, detail="Cannot modify an already approved PRD without explicit authorization.")
+    )
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {
+        "sections": {"overview": "Attempt to overwrite approved PRD"},
+        "forceApprovedOverwrite": False,
+    }
+    resp = client.put(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/sections", json=payload)
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
+    assert "approved" in resp.json()["detail"].lower()
+
+
+def test_update_sections_concurrency_conflict(mock_auth_user):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.update_sections = AsyncMock(
+        side_effect=HTTPException(status_code=409, detail="Concurrent update conflict: PRD version is '1.0.1', expected '1.0.0'.")
+    )
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {
+        "sections": {"overview": "Concurrent edit"},
+        "expectedVersion": "1.0.0",
+    }
+    resp = client.put(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/sections", json=payload)
+    assert resp.status_code == status.HTTP_409_CONFLICT
+    assert "Concurrent" in resp.json()["detail"]
+
+
+def test_update_sections_workspace_forbidden(mock_auth_user):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.update_sections = AsyncMock(
+        side_effect=HTTPException(status_code=403, detail="Access denied: user is not an active member of this workspace")
+    )
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {"sections": {"overview": "Forbidden edit"}}
+    resp = client.put(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/sections", json=payload)
+    assert resp.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_regenerate_section_unauthenticated():
+    mock_db = MagicMock()
+    app.dependency_overrides[get_mongo_db] = lambda: mock_db
+    resp = client.post(
+        f"/api/v1/ai/planning/{MOCK_PLAN_ID}/regenerate-section",
+        json={"sectionKey": "user_stories"},
+    )
+    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_regenerate_section_success(mock_auth_user, sample_plan_response):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.regenerate_section = AsyncMock(return_value=sample_plan_response)
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {
+        "sectionKey": "user_stories",
+        "customInstructions": "Emphasize high volume CSV exports.",
+    }
+    resp = client.post(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/regenerate-section", json=payload)
+    assert resp.status_code == status.HTTP_200_OK
+    data = resp.json()
+    assert data["planning_id"] == MOCK_PLAN_ID
+    assert len(data["user_stories"]) == 1
+    mock_service.regenerate_section.assert_awaited_once()
+
+
+def test_regenerate_section_approved_protection(mock_auth_user):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.regenerate_section = AsyncMock(
+        side_effect=HTTPException(status_code=400, detail="Cannot regenerate a section of an already approved PRD without explicit authorization.")
+    )
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {"sectionKey": "user_stories", "forceApprovedOverwrite": False}
+    resp = client.post(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/regenerate-section", json=payload)
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_regenerate_section_invalid_key(mock_auth_user):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.regenerate_section = AsyncMock(
+        side_effect=HTTPException(status_code=400, detail="Invalid section key: 'invalid_section'.")
+    )
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {"sectionKey": "invalid_section"}
+    resp = client.post(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/regenerate-section", json=payload)
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_regenerate_section_rate_limit_error(mock_auth_user):
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    mock_service = MagicMock()
+    mock_service.regenerate_section = AsyncMock(
+        side_effect=AIRateLimitException("Rate limit", provider="groq")
+    )
+    app.dependency_overrides[get_product_planning_service] = lambda: mock_service
+
+    payload = {"sectionKey": "user_stories"}
+    resp = client.post(f"/api/v1/ai/planning/{MOCK_PLAN_ID}/regenerate-section", json=payload)
+    assert resp.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 

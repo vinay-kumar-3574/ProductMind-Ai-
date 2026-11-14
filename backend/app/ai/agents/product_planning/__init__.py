@@ -32,6 +32,8 @@ from app.ai.agents.product_planning.schemas import (
     GeneratePRDRequest,
     GenerateUserStoriesRequest,
     ReviewPlanRequest,
+    UpdatePRDSectionsRequest,
+    RegenerateSectionRequest,
     ProductPlanResponse,
 )
 from app.ai.agents.product_planning.prompts import (
@@ -49,6 +51,9 @@ from app.ai.agents.product_planning.agent import (
 from app.ai.agents.product_planning.service import (
     ProductPlanningService,
     build_prd_sections,
+    bump_semver,
+    CANONICAL_SECTION_KEYS,
+    SECTION_KEY_MAP,
 )
 
 __all__ = [
@@ -80,6 +85,8 @@ __all__ = [
     "GeneratePRDRequest",
     "GenerateUserStoriesRequest",
     "ReviewPlanRequest",
+    "UpdatePRDSectionsRequest",
+    "RegenerateSectionRequest",
     "ProductPlanResponse",
     # Prompts
     "product_planning_prompt",
@@ -94,5 +101,8 @@ __all__ = [
     # Service & Helper
     "ProductPlanningService",
     "build_prd_sections",
+    "bump_semver",
+    "CANONICAL_SECTION_KEYS",
+    "SECTION_KEY_MAP",
 ]
 

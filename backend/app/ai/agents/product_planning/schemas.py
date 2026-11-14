@@ -136,7 +136,7 @@ class ProductRequirementsDocument(BaseModel):
     title: str = Field(..., description="Clear, descriptive PRD title")
     executive_summary: str = Field(..., description="High-level overview of the feature and value proposition")
     problem_statement: str = Field(..., description="Precise formulation of customer and business problems solved")
-    background: str = Field(..., description="Origin of request, customer demand context, and historical drivers")
+    background: str = Field(default="", description="Origin of request, customer demand context, and historical drivers")
     customer_pain_points: List[str] = Field(default_factory=list, description="Specific grounded customer pain points")
     target_users: List[str] = Field(default_factory=list, description="Target personas and primary user roles")
     business_objectives: List[str] = Field(default_factory=list, description="Commercial and product goals achieved")
@@ -523,6 +523,59 @@ class ReviewPlanRequest(BaseModel):
 
     review_status: str = Field(..., description="'pending_review', 'approved', 'rejected', or 'draft'")
     review_notes: Optional[str] = Field(default=None, description="Optional feedback or rejection reasoning")
+
+
+class UpdatePRDSectionsRequest(BaseModel):
+    """Request payload to update individual or multiple PRD sections with Atlas persistence."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    sections: Dict[str, Any] = Field(
+        ...,
+        description="Dictionary mapping section names to revised content. Accepts camelCase or snake_case 13-section keys."
+    )
+    title: Optional[str] = Field(default=None, description="Optional revised PRD title")
+    structured_prd: Optional[Dict[str, Any]] = Field(default=None, alias="structuredPrd", description="Optional structured PRD updates")
+    user_stories: Optional[List[Dict[str, Any]]] = Field(default=None, alias="userStories", description="Optional updated user stories")
+    technical_requirements: Optional[List[Dict[str, Any]]] = Field(default=None, alias="technicalRequirements")
+    success_metrics: Optional[List[Dict[str, Any]]] = Field(default=None, alias="successMetrics")
+    risk_analysis: Optional[List[Dict[str, Any]]] = Field(default=None, alias="riskAnalysis")
+    roadmap_recommendations: Optional[List[Dict[str, Any]]] = Field(default=None, alias="roadmapRecommendations")
+    force_approved_overwrite: bool = Field(
+        default=False,
+        alias="forceApprovedOverwrite",
+        description="Authorization required to modify an approved PRD."
+    )
+    version_bump: Optional[str] = Field(
+        default="patch",
+        alias="versionBump",
+        description="Versioning increment strategy: 'patch' (e.g. 1.0.0 -> 1.0.1), 'minor' (1.1.0), 'major' (2.0.0), or 'none'"
+    )
+    expected_version: Optional[str] = Field(
+        default=None,
+        alias="expectedVersion",
+        description="Optional optimistic concurrency control check matching current document version"
+    )
+
+
+class RegenerateSectionRequest(BaseModel):
+    """Request payload to regenerate a specific PRD section using LLM inference."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    section_key: str = Field(
+        ...,
+        alias="sectionKey",
+        description="Section identifier to regenerate (e.g. 'user_stories', 'acceptance_criteria', 'functional_requirements', 'non_functional_requirements', 'overview', 'problem_statement', 'goals_and_success_metrics', 'risks_and_mitigations', 'release_plan', etc.)"
+    )
+    custom_instructions: Optional[str] = Field(
+        default=None,
+        alias="customInstructions",
+        description="Optional custom PM directive or constraint for this specific regeneration"
+    )
+    force_approved_overwrite: bool = Field(
+        default=False,
+        alias="forceApprovedOverwrite",
+        description="Authorization required to regenerate a section on an approved PRD."
+    )
 
 
 class ProductPlanResponse(BaseModel):

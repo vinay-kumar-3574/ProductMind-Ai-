@@ -671,3 +671,95 @@ class ProductPlanningAgent(BaseAgent[ProductPlanningAgentOutput]):
             max_output_tokens=max_output_tokens,
         )
         return result
+
+    async def agenerate_narrative(
+        self,
+        group_id: str,
+        title: str,
+        description: str,
+        feedback_count: int,
+        unique_customer_count: int,
+        pain_points: List[str],
+        evidence: List[str],
+        themes: List[str],
+        urgency_dist: Optional[Dict[str, int]] = None,
+        sentiment_dist: Optional[Dict[str, int]] = None,
+        prioritization_data: Optional[Dict[str, Any]] = None,
+        strategic_context: Optional[ProductStrategicContext] = None,
+        max_retries: int = 1,
+        max_output_tokens: int = 950,
+    ) -> CorePRDNarrativeOutput:
+        """
+        Generates Stage 1a concise core PRD narrative sections.
+        """
+        inputs = format_product_planning_prompt_inputs(
+            group_id=group_id,
+            title=title,
+            description=description,
+            feedback_count=feedback_count,
+            unique_customer_count=unique_customer_count,
+            pain_points=pain_points,
+            evidence=evidence,
+            themes=themes,
+            urgency_dist=urgency_dist,
+            sentiment_dist=sentiment_dist,
+            prioritization_data=prioritization_data,
+            strategic_context=strategic_context,
+        )
+
+        validated_inputs = self.validate_input(inputs)
+        messages = prd_narrative_prompt.format_messages(**validated_inputs)
+        result, _ = await self._ainvoke_stage_structured(
+            stage_name="core_prd_narrative",
+            schema=CorePRDNarrativeOutput,
+            messages=messages,
+            max_retries=max_retries,
+            max_output_tokens=max_output_tokens,
+        )
+        return result
+
+    async def agenerate_requirements(
+        self,
+        group_id: str,
+        title: str,
+        description: str,
+        feedback_count: int,
+        unique_customer_count: int,
+        pain_points: List[str],
+        evidence: List[str],
+        themes: List[str],
+        urgency_dist: Optional[Dict[str, int]] = None,
+        sentiment_dist: Optional[Dict[str, int]] = None,
+        prioritization_data: Optional[Dict[str, Any]] = None,
+        strategic_context: Optional[ProductStrategicContext] = None,
+        max_retries: int = 1,
+        max_output_tokens: int = 950,
+    ) -> CorePRDRequirementsOutput:
+        """
+        Generates Stage 1b functional & non-functional requirements and dependencies.
+        """
+        inputs = format_product_planning_prompt_inputs(
+            group_id=group_id,
+            title=title,
+            description=description,
+            feedback_count=feedback_count,
+            unique_customer_count=unique_customer_count,
+            pain_points=pain_points,
+            evidence=evidence,
+            themes=themes,
+            urgency_dist=urgency_dist,
+            sentiment_dist=sentiment_dist,
+            prioritization_data=prioritization_data,
+            strategic_context=strategic_context,
+        )
+
+        validated_inputs = self.validate_input(inputs)
+        messages = prd_requirements_prompt.format_messages(**validated_inputs)
+        result, _ = await self._ainvoke_stage_structured(
+            stage_name="core_prd_requirements",
+            schema=CorePRDRequirementsOutput,
+            messages=messages,
+            max_retries=max_retries,
+            max_output_tokens=max_output_tokens,
+        )
+        return result
