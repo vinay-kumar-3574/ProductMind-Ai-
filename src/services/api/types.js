@@ -78,6 +78,8 @@ export const API_ENDPOINTS = {
     LIST: '/api/v1/ai/planning/',
     DETAIL: (id) => `/api/v1/ai/planning/${id}`,
     REVIEW: (id) => `/api/v1/ai/planning/${id}/review`,
+    SECTIONS: (id) => `/api/v1/ai/planning/${id}/sections`,
+    REGENERATE_SECTION: (id) => `/api/v1/ai/planning/${id}/regenerate-section`,
   },
 
   // AI Orchestrator Pipeline

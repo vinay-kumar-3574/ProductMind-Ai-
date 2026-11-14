@@ -2,10 +2,58 @@
  * ProductMind AI — PRD and Product Planning Service
  * Real integration with FastAPI Product Planning Agent for automated PRD,
  * user stories, acceptance criteria, technical specs, and human review workflows.
+ * Backed directly by MongoDB Atlas.
  */
 
 import { apiClient, getActiveWorkspaceId } from './apiClient'
 import { API_ENDPOINTS } from './types'
+
+/**
+ * Normalizes 13-section dictionary so both camelCase and snake_case representations
+ * map cleanly into standard frontend keys.
+ */
+export function normalizePlanSections(rawSections = {}) {
+  const s = rawSections || {}
+  return {
+    overview: s.overview || s.executive_summary || '',
+    problemStatement: s.problemStatement || s.problem_statement || '',
+    targetUsers: s.targetUsers || s.target_users || '',
+    customerPainPoints: s.customerPainPoints || s.customer_pain_points || '',
+    proposedSolution: s.proposedSolution || s.proposed_solution || '',
+    goalsAndSuccessMetrics: s.goalsAndSuccessMetrics || s.goals_and_success_metrics || '',
+    functionalRequirements: s.functionalRequirements || s.functional_requirements || '',
+    nonFunctionalRequirements: s.nonFunctionalRequirements || s.non_functional_requirements || '',
+    userStories: s.userStories || s.user_stories || '',
+    acceptanceCriteria: s.acceptanceCriteria || s.acceptance_criteria || '',
+    dependenciesAndConstraints: s.dependenciesAndConstraints || s.dependencies_and_constraints || '',
+    risksAndMitigations: s.risksAndMitigations || s.risks_and_mitigations || '',
+    releasePlan: s.releasePlan || s.release_plan || '',
+  }
+}
+
+/**
+ * Normalizes a raw ProductPlanResponse document from MongoDB Atlas.
+ */
+export function normalizePlan(plan) {
+  if (!plan) return null
+  const id = plan.planning_id || plan.id || plan._id
+  return {
+    ...plan,
+    id,
+    planning_id: id,
+    featureId: plan.feature_group_id || plan.featureId || null,
+    title: plan.title || 'Untitled PRD',
+    version: plan.version || '1.0.0',
+    status: plan.status || 'draft',
+    author: plan.author || 'Product Manager',
+    sections: normalizePlanSections(plan.sections),
+    createdAt: plan.created_at || plan.createdAt || new Date().toISOString(),
+    updatedAt: plan.updated_at || plan.updatedAt || new Date().toISOString(),
+    reviewNotes: plan.review_notes || plan.reviewNotes || null,
+    reviewedBy: plan.reviewed_by || plan.reviewedBy || null,
+    reviewedAt: plan.reviewed_at || plan.reviewedAt || null,
+  }
+}
 
 export const prdService = {
   /**
@@ -41,14 +89,16 @@ export const prdService = {
     }
 
     const response = await apiClient.post(API_ENDPOINTS.AI_PLANNING.GENERATE, payload)
-    if (!response.success) {
-      throw new Error(response.error || 'Failed to generate product plan.')
+    if (!response?.success) {
+      const err = new Error(response?.error || 'Failed to generate product plan.')
+      err.status = response?.status
+      throw err
     }
-    return response.data
+    return normalizePlan(response.data)
   },
 
   /**
-   * List saved Product Plans from backend
+   * List saved Product Plans from backend MongoDB Atlas
    */
   async listProductPlans(workspaceId = null, status = null) {
     const wsId = workspaceId || getActiveWorkspaceId()
@@ -62,124 +112,149 @@ export const prdService = {
     const response = await apiClient.get(API_ENDPOINTS.AI_PLANNING.LIST, {
       params: queryParams,
     })
-    return response.data || []
+    if (!response?.success) {
+      const err = new Error(response?.error || 'Failed to list product plans.')
+      err.status = response?.status
+      throw err
+    }
+    const plans = response.data || []
+    return Array.isArray(plans) ? plans.map(normalizePlan) : []
   },
 
   /**
    * Retrieve a specific Product Plan by PRD/Plan ID
    */
   async getProductPlan(planningId, workspaceId = null) {
+    if (!planningId) {
+      throw new Error('Planning ID is required.')
+    }
     const wsId = workspaceId || getActiveWorkspaceId()
-    const url = `/api/v1/ai/planning/${planningId}`
+    const url = API_ENDPOINTS.AI_PLANNING.DETAIL(planningId)
     const response = await apiClient.get(url, {
-      params: { workspace_id: wsId },
+      params: wsId ? { workspace_id: wsId } : {},
     })
-    return response.data
+    if (!response?.success) {
+      const err = new Error(response?.error || 'Failed to retrieve product plan.')
+      err.status = response?.status
+      throw err
+    }
+    return normalizePlan(response.data)
+  },
+
+  /**
+   * Update PRD Sections with Atlas persistence, optimistic concurrency check,
+   * and approved-document protection.
+   */
+  async updatePRDSections(planningId, {
+    sections,
+    title = null,
+    structuredPrd = null,
+    userStories = null,
+    forceApprovedOverwrite = false,
+    versionBump = 'patch',
+    expectedVersion = null,
+    workspaceId = null,
+  }) {
+    if (!planningId) {
+      throw new Error('Planning ID is required to update sections.')
+    }
+    const wsId = workspaceId || getActiveWorkspaceId()
+    const url = API_ENDPOINTS.AI_PLANNING.SECTIONS(planningId)
+    const payload = {
+      sections,
+      ...(title ? { title } : {}),
+      ...(structuredPrd ? { structuredPrd } : {}),
+      ...(userStories ? { userStories } : {}),
+      ...(forceApprovedOverwrite !== undefined ? { forceApprovedOverwrite } : {}),
+      ...(versionBump ? { versionBump } : {}),
+      ...(expectedVersion ? { expectedVersion } : {}),
+    }
+    const response = await apiClient.put(url, payload, {
+      params: wsId ? { workspace_id: wsId } : {},
+    })
+    if (!response?.success) {
+      const err = new Error(response?.error || 'Failed to update PRD sections.')
+      err.status = response?.status
+      throw err
+    }
+    return normalizePlan(response.data)
+  },
+
+  /**
+   * Regenerate a single PRD section using Groq LLM inference without full-document loops.
+   */
+  async regenerateSection(planningId, {
+    sectionKey,
+    customInstructions = null,
+    forceApprovedOverwrite = false,
+    workspaceId = null,
+  }) {
+    if (!planningId) {
+      throw new Error('Planning ID is required to regenerate section.')
+    }
+    if (!sectionKey) {
+      throw new Error('Section key is required.')
+    }
+    const wsId = workspaceId || getActiveWorkspaceId()
+    const url = API_ENDPOINTS.AI_PLANNING.REGENERATE_SECTION(planningId)
+    const payload = {
+      sectionKey,
+      ...(customInstructions ? { customInstructions } : {}),
+      ...(forceApprovedOverwrite !== undefined ? { forceApprovedOverwrite } : {}),
+    }
+    const response = await apiClient.post(url, payload, {
+      params: wsId ? { workspace_id: wsId } : {},
+    })
+    if (!response?.success) {
+      const err = new Error(response?.error || 'Failed to regenerate PRD section.')
+      err.status = response?.status
+      throw err
+    }
+    return normalizePlan(response.data)
   },
 
   /**
    * Submit human review decision (approve, reject, pending_review, draft)
    */
-  async reviewProductPlan(planningId, action, notes = '') {
+  async reviewProductPlan(planningId, actionOrStatus, notes = '') {
+    if (!planningId) {
+      throw new Error('Planning ID is required to submit review.')
+    }
     const url = API_ENDPOINTS.AI_PLANNING.REVIEW(planningId)
     const statusMap = {
       approve: 'approved',
       approved: 'approved',
       reject: 'rejected',
       rejected: 'rejected',
-      request_changes: 'pending_review',
+      request_changes: 'rejected',
+      submit: 'pending_review',
+      submit_for_review: 'pending_review',
       pending_review: 'pending_review',
       draft: 'draft',
     }
-    const reviewStatus = statusMap[String(action || '').toLowerCase()] || action
+    const reviewStatus = statusMap[String(actionOrStatus || '').toLowerCase()] || actionOrStatus
     const response = await apiClient.patch(url, {
       review_status: reviewStatus,
       ...(notes ? { review_notes: notes } : {}),
     })
-    if (!response.success) {
-      throw new Error(response.error || 'Failed to update PRD review status.')
+    if (!response?.success) {
+      const err = new Error(response?.error || 'Failed to update PRD review status.')
+      err.status = response?.status
+      throw err
     }
-    return response.data
+    return normalizePlan(response.data)
   },
 
   /**
-   * Generate PRD compatibility wrapper
+   * Legacy alias: generatePRD
    */
   async generatePRD(feature, customTitle = '') {
     const wsId = getActiveWorkspaceId()
-    if (wsId && feature?.id) {
-      try {
-        const plan = await this.generateProductPlan({
-          workspaceId: wsId,
-          featureGroupId: feature.id,
-          strategicContext: customTitle || feature.name,
-        })
-        return {
-          success: true,
-          data: plan,
-          isDemo: false,
-          status: 200,
-        }
-      } catch (err) {
-        console.warn('Real AI PRD generation failed, falling back to local template:', err)
-      }
-    }
-
-    // Local fallback document
-    const fallbackPRD = {
-      id: `prd-${Date.now()}`,
-      title: customTitle || (feature ? `${feature.name} Specification` : 'Product Requirements Document'),
-      featureId: feature?.id || null,
-      version: '1.0.0',
-      status: 'Pending Review',
-      review_status: 'pending_review',
-      createdAt: new Date().toISOString().split('T')[0],
-      updatedAt: new Date().toISOString().split('T')[0],
-      executive_summary: `Comprehensive specification for ${feature?.name || 'this initiative'}, synthesized from verified customer feedback.`,
-      user_stories: [
-        {
-          id: 'US-101',
-          title: `Enable ${feature?.name || 'feature'} Core Flow`,
-          story: `As a product user, I want ${feature?.name || 'this functionality'} so that my team can streamline daily operations.`,
-          acceptance_criteria: [
-            'Given the user is on the product page, When they access the new interface, Then they can perform the action seamlessly.',
-            'Given an invalid input, When submitted, Then the system displays an inline validation message.',
-          ],
-        },
-      ],
-      technical_specifications: [
-        'Backend service endpoint contracts validated with Pydantic schemas.',
-        'Data persistence in MongoDB with tenant workspace boundaries.',
-      ],
-      success_metrics: [
-        { name: 'Adoption Rate', target: '40% within 30 days', baseline: null },
-        { name: 'Customer Sentiment Score', target: '+0.50 positive shift', baseline: null },
-      ],
-    }
-
-    return {
-      success: true,
-      data: fallbackPRD,
-      isDemo: true,
-      status: 200,
-    }
-  },
-
-  async getPRDs() {
-    const wsId = getActiveWorkspaceId()
-    if (wsId) {
-      try {
-        const plans = await this.listProductPlans(wsId)
-        return { success: true, data: plans, isDemo: false, status: 200 }
-      } catch {
-        // Fallback
-      }
-    }
-    return { success: true, data: null, isDemo: true, status: 200 }
-  },
-
-  async updatePRD(id, updates) {
-    return { success: true, data: { id, ...updates }, isDemo: true, status: 200 }
+    return this.generateProductPlan({
+      workspaceId: wsId,
+      featureGroupId: feature?.id,
+      strategicContext: customTitle || feature?.name,
+    })
   },
 }
 
