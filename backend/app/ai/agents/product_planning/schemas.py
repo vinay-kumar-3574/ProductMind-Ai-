@@ -602,3 +602,68 @@ class ProductPlanResponse(BaseModel):
     reviewed_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class ValidationSeverity(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ValidationCategory(str, Enum):
+    COMPLETENESS = "completeness"
+    REQUIREMENT_QUALITY = "requirement_quality"
+    EVIDENCE_TRACEABILITY = "evidence_traceability"
+    ACCEPTANCE_CRITERIA = "acceptance_criteria"
+    SUCCESS_METRICS = "success_metrics"
+    RISKS_AND_MITIGATIONS = "risks_and_mitigations"
+
+
+class ValidationIssue(BaseModel):
+    """Structured quality or compliance defect identified in a PRD."""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(..., description="Unique issue identifier (e.g. 'ISSUE-001')")
+    category: ValidationCategory = Field(..., description="Validation category domain")
+    severity: ValidationSeverity = Field(..., description="Issue severity: critical, high, medium, low")
+    section_key: str = Field(..., description="PRD section key affected (e.g. 'functional_requirements', 'user_stories')")
+    title: str = Field(..., description="Concise issue headline")
+    message: str = Field(..., description="Detailed diagnostic description of the defect")
+    suggestion: Optional[str] = Field(default=None, description="Actionable recommendation for PM or author")
+    related_id: Optional[str] = Field(default=None, description="Associated requirement, story, or criterion ID if applicable")
+
+
+class ValidationSummary(BaseModel):
+    """Aggregated validation statistics, quality score, and review readiness assessment."""
+    model_config = ConfigDict(extra="ignore")
+
+    total_checks: int = Field(default=0, ge=0)
+    passed_checks: int = Field(default=0, ge=0)
+    failed_checks: int = Field(default=0, ge=0)
+    warnings: int = Field(default=0, ge=0)
+    critical_issues: int = Field(default=0, ge=0)
+    high_severity_issues: int = Field(default=0, ge=0)
+    medium_severity_issues: int = Field(default=0, ge=0)
+    low_severity_issues: int = Field(default=0, ge=0)
+    quality_score: int = Field(default=100, ge=0, le=100, description="Deterministic quality score [0..100]")
+    quality_score_calculation: str = Field(default="", description="Transparent deduction formula explanation")
+    is_valid_for_review: bool = Field(default=True, description="True if 0 critical issues exist")
+    has_blocking_issues: bool = Field(default=False, description="True if critical > 0 or high > 0")
+
+
+class PRDValidationResult(BaseModel):
+    """Complete validation report for a Product Requirements Document."""
+    model_config = ConfigDict(extra="ignore")
+
+    planning_id: str = Field(..., description="PRD document ObjectId")
+    title: str = Field(..., description="PRD title")
+    version: str = Field(default="1.0.0")
+    status: str = Field(..., description="Current PRD review status")
+    summary: ValidationSummary = Field(..., description="Aggregated validation scorecard")
+    issues: List[ValidationIssue] = Field(default_factory=list, description="List of identified issues and suggestions")
+    section_status: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Section health mapping: 'valid', 'warning', or 'error'"
+    )
+    validated_at: datetime = Field(default_factory=lambda: datetime.now())

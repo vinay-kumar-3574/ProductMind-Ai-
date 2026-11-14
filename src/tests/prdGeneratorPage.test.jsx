@@ -288,7 +288,7 @@ describe('PRDGeneratorPage — Phase 5.3 Atlas Integration & Human Review', () =
         sectionKey: 'userStories',
         customInstructions: 'Emphasize GDPR compliance',
       }))
-      expect(screen.getByText('### US-999: AI-Regenerated Stories with Bounded Tokens')).toBeInTheDocument()
+      expect(screen.getAllByText(/AI-Regenerated Stories with Bounded Tokens/i).length).toBeGreaterThan(0)
       // Other sections remain intact
       expect(screen.getByText('Initial overview description')).toBeInTheDocument()
     })

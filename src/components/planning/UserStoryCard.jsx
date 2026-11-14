@@ -177,25 +177,31 @@ export function UserStoryCard({
           ) : (
             <span className="text-[10px] text-amber-500 font-semibold flex items-center gap-0.5">
               <AlertCircle className="w-3 h-3" />
-              Requires Confirmation
+              Needs PM Review
             </span>
           )}
         </div>
 
         <div className="flex items-center gap-1.5 self-end sm:self-auto">
-          {!isEditing && !isApproved && (
+          {!isEditing && (
             <>
               <button
+                type="button"
                 onClick={handleStartEdit}
-                className="p-1.5 text-slate-400 hover:text-brand-500 rounded-lg hover:bg-slate-50 dark:hover:bg-navy-900 cursor-pointer"
+                disabled={isApproved}
+                className="p-1.5 text-slate-400 hover:text-brand-500 rounded-lg hover:bg-slate-50 dark:hover:bg-navy-900 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Edit User Story"
+                aria-label="Edit User Story"
               >
                 <Edit2 className="w-3.5 h-3.5" />
               </button>
               <button
+                type="button"
                 onClick={() => setConfirmDelete(true)}
-                className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-50 dark:hover:bg-navy-900 cursor-pointer"
+                disabled={isApproved}
+                className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-50 dark:hover:bg-navy-900 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 title="Delete User Story"
+                aria-label="Delete User Story"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>

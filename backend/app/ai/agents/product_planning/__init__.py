@@ -35,6 +35,15 @@ from app.ai.agents.product_planning.schemas import (
     UpdatePRDSectionsRequest,
     RegenerateSectionRequest,
     ProductPlanResponse,
+    ValidationSeverity,
+    ValidationCategory,
+    ValidationIssue,
+    ValidationSummary,
+    PRDValidationResult,
+)
+from app.ai.agents.product_planning.validator import (
+    PRDValidator,
+    validate_product_plan,
 )
 from app.ai.agents.product_planning.prompts import (
     product_planning_prompt,

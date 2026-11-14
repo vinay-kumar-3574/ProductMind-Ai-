@@ -257,6 +257,26 @@ export const prdService = {
   },
 
   /**
+   * Validate PRD quality, completeness, traceability, criteria, and risks without modifying Atlas data.
+   */
+  async validateProductPlan(planningId, workspaceId = null) {
+    if (!planningId) {
+      throw new Error('Planning ID is required to validate PRD.')
+    }
+    const wsId = workspaceId || getActiveWorkspaceId()
+    const url = API_ENDPOINTS.AI_PLANNING.VALIDATE(planningId)
+    const response = await apiClient.post(url, {}, {
+      params: wsId ? { workspace_id: wsId } : {},
+    })
+    if (!response?.success) {
+      const err = new Error(response?.error || 'Failed to validate product plan.')
+      err.status = response?.status
+      throw err
+    }
+    return response.data
+  },
+
+  /**
    * Legacy alias: generatePRD
    */
   async generatePRD(feature, customTitle = '') {

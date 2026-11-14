@@ -127,8 +127,9 @@ export function AcceptanceCriteriaList({
   // Start adding a new criterion
   const handleStartAdd = () => {
     setErrorMsg(null)
-    const existingCount = criteria.length + allExistingCriterionIds.length + 1
-    const nextId = `AC-${String(existingCount).padStart(3, '0')}`
+    const allIds = [...new Set([...criteria.map(c => c.criterion_id), ...allExistingCriterionIds])]
+    const nextNum = allIds.length + 1
+    const nextId = `AC-${String(nextNum).padStart(3, '0')}`
 
     setAddForm({
       criterion_id: nextId,
@@ -143,6 +144,15 @@ export function AcceptanceCriteriaList({
       related_story_id: storyId,
     })
     setIsAdding(true)
+  }
+
+  // Toggle testable status on a criterion
+  const handleToggleTestable = (criterionId) => {
+    if (isApproved) return
+    const updated = criteria.map(c =>
+      c.criterion_id === criterionId ? { ...c, testable: !c.testable } : c
+    )
+    onChangeCriteria(updated)
   }
 
   // Save new criterion
@@ -393,14 +403,22 @@ export function AcceptanceCriteriaList({
                     </span>
                     {renderScenarioBadge(item.scenario_type)}
                     {renderOriginBadge(item.origin)}
-                    {item.testable ? (
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-medium">
-                        <CheckCircle2 className="w-2.5 h-2.5" />
-                        Testable
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-slate-400 italic">Manual Review</span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleTestable(item.criterion_id)}
+                      disabled={isApproved}
+                      className="cursor-pointer"
+                      title={item.testable ? 'Mark as non-testable' : 'Mark as testable'}
+                    >
+                      {item.testable ? (
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-medium">
+                          <CheckCircle2 className="w-2.5 h-2.5" />
+                          Testable
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 italic">Non-testable</span>
+                      )}
+                    </button>
                     {item.requires_confirmation && (
                       <span className="text-[10px] text-amber-500 font-semibold flex items-center gap-0.5">
                         <AlertCircle className="w-2.5 h-2.5" />

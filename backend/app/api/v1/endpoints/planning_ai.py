@@ -18,6 +18,7 @@ from app.ai.agents.product_planning import (
     UpdatePRDSectionsRequest,
     RegenerateSectionRequest,
     ProductPlanResponse,
+    PRDValidationResult,
 )
 from app.ai.exceptions import (
     AIServiceException,
@@ -362,4 +363,32 @@ async def regenerate_prd_section(
     except Exception as exc:
         logger.exception("Error regenerating PRD section for plan '%s': %s", planning_id, exc)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error regenerating PRD section.")
+
+
+@router.post(
+    "/{planning_id}/validate",
+    status_code=status.HTTP_200_OK,
+    summary="Validate PRD Quality & Completeness",
+    description="Deterministically audits PRD completeness, requirement quality, evidence traceability, acceptance criteria, success metrics, and risk mitigations without modifying Atlas content.",
+    response_model=PRDValidationResult,
+)
+async def validate_product_plan_endpoint(
+    planning_id: str,
+    workspace_id: Optional[str] = Query(None, description="Optional workspace ID verification"),
+    current_user: User = Depends(get_current_user),
+    service: ProductPlanningService = Depends(get_product_planning_service),
+) -> PRDValidationResult:
+    """Performs comprehensive quality, traceability, and consistency audit of a persisted PRD."""
+    try:
+        return await service.validate_plan(
+            planning_id=planning_id,
+            user=current_user,
+            workspace_id=workspace_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error validating PRD for plan '%s': %s", planning_id, exc)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error validating PRD.")
+
 

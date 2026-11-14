@@ -22,6 +22,7 @@ import {
   Check,
   XCircle,
   AlertCircle,
+  AlertTriangle,
   Lock,
   RefreshCw,
   MessageSquare,
@@ -31,6 +32,7 @@ import {
 import { Card, Badge, Button, Modal } from '../components/common'
 import { prdService, normalizePlanSections } from '../services/api/prdService'
 import { useWorkspace } from '../context/WorkspaceContext'
+import PRDValidationPanel from '../components/planning/validation/PRDValidationPanel'
 import UserStoryStudio from '../components/planning/UserStoryStudio'
 import {
   parseTextToStories,
@@ -80,6 +82,12 @@ export function PRDGeneratorPage() {
   const [confirmApproveModal, setConfirmApproveModal] = useState(false)
   const [rejectModal, setRejectModal] = useState(false)
   const [reviewNotes, setReviewNotes] = useState('')
+
+  // PRD Quality & Validation state
+  const [validationResult, setValidationResult] = useState(null)
+  const [isValidating, setIsValidating] = useState(false)
+  const [showValidationPanel, setShowValidationPanel] = useState(false)
+  const [unresolvedWarningModal, setUnresolvedWarningModal] = useState(null)
 
   // Generation Modal state
   const [showNewModal, setShowNewModal] = useState(false)
@@ -264,6 +272,7 @@ export function PRDGeneratorPage() {
     setIsEditing(false)
     setConflictError(null)
     setSaveError(null)
+    setValidationResult(null)
 
     setIsLoadingDetail(true)
     try {
@@ -308,6 +317,7 @@ export function PRDGeneratorPage() {
       setIsEditing(false)
       setShowNewModal(false)
       setCustomTitle('')
+      setValidationResult(null)
       addToast('Product Requirements Document generated with AI grounding and persisted to Atlas!', 'success')
     } catch (err) {
       setGenerationError(err?.message || 'Failed to generate PRD')
@@ -464,14 +474,75 @@ export function PRDGeneratorPage() {
     }
   }
 
+  // PRD Quality & Validation Handler
+  const handleRunValidation = async (targetPlanId = null) => {
+    const planIdToValidate = targetPlanId || activePlan?.id
+    if (!planIdToValidate) {
+      addToast('Please select a product plan to validate.', 'warning')
+      return
+    }
+    setIsValidating(true)
+    setShowValidationPanel(true)
+    try {
+      const result = await prdService.validateProductPlan(planIdToValidate, currentWorkspace?.id)
+      setValidationResult(result)
+      if (result.summary?.has_blocking_issues) {
+        addToast(
+          `Quality audit completed: ${result.summary.critical_issues + result.summary.high_severity_issues} blocking findings detected (Score: ${result.summary.quality_score}/100).`,
+          'warning'
+        )
+      } else {
+        addToast(`Quality audit passed! Score: ${result.summary?.quality_score || 100}/100.`, 'success')
+      }
+    } catch (err) {
+      addToast(err.message || 'Failed to complete PRD validation audit.', 'error')
+    } finally {
+      setIsValidating(false)
+    }
+  }
+
+  // Smooth scroll and visual highlight to section from validation findings
+  const handleNavigateToSection = (sectionKey, relatedId) => {
+    const keyMap = {
+      overview: 'overview',
+      problem_statement: 'problemStatement',
+      target_users: 'targetUsers',
+      customer_pain_points: 'customerPainPoints',
+      proposed_solution: 'proposedSolution',
+      goals_and_success_metrics: 'goalsAndSuccessMetrics',
+      functional_requirements: 'functionalRequirements',
+      non_functional_requirements: 'nonFunctionalRequirements',
+      user_stories: 'userStories',
+      acceptance_criteria: 'acceptanceCriteria',
+      dependencies_and_constraints: 'dependenciesAndConstraints',
+      risks_and_mitigations: 'risksAndMitigations',
+      release_plan: 'releasePlan',
+    }
+    const targetKey = keyMap[sectionKey] || sectionKey
+    const el = document.getElementById(`prd-section-${targetKey}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('ring-2', 'ring-brand-500', 'ring-offset-2')
+      setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-brand-500', 'ring-offset-2')
+      }, 2500)
+    }
+  }
+
   // Submit plan for human review
-  const handleSubmitForReview = async () => {
+  const handleSubmitForReview = async (forceProceed = false) => {
     if (!activePlan) return
+    // Check for unresolved blocking validation issues
+    if (!forceProceed && validationResult?.summary?.has_blocking_issues) {
+      setUnresolvedWarningModal({ action: 'submit' })
+      return
+    }
     setIsReviewing(true)
     try {
       const updated = await prdService.reviewProductPlan(activePlan.id, 'pending_review')
       setActivePlan(updated)
       setPlans(prev => prev.map(p => (p.id === updated.id ? updated : p)))
+      setUnresolvedWarningModal(null)
       addToast('Document submitted for PM human review.', 'success')
     } catch (err) {
       addToast(err.message || 'Failed to submit plan for review.', 'error')
@@ -481,14 +552,19 @@ export function PRDGeneratorPage() {
   }
 
   // Approve plan
-  const handleApprovePlan = async () => {
+  const handleApprovePlan = async (forceProceed = false) => {
     if (!activePlan) return
+    if (!forceProceed && validationResult?.summary?.has_blocking_issues) {
+      setUnresolvedWarningModal({ action: 'approve' })
+      return
+    }
     setIsReviewing(true)
     try {
       const updated = await prdService.reviewProductPlan(activePlan.id, 'approved')
       setActivePlan(updated)
       setPlans(prev => prev.map(p => (p.id === updated.id ? updated : p)))
       setConfirmApproveModal(false)
+      setUnresolvedWarningModal(null)
       setIsEditing(false)
       addToast('Plan approved successfully! Document modifications are now protected.', 'success')
     } catch (err) {
@@ -607,6 +683,20 @@ export function PRDGeneratorPage() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant={validationResult ? 'secondary' : 'outline'}
+            size="sm"
+            icon={ShieldCheck}
+            onClick={() => handleRunValidation()}
+            disabled={!activePlan || isValidating}
+            title="Run deterministic 6-category PRD Quality & Traceability Audit"
+          >
+            {isValidating
+              ? 'Auditing...'
+              : validationResult
+              ? `Quality Audit (${validationResult.summary?.quality_score}/100)`
+              : 'Quality Audit'}
+          </Button>
           <Button variant="outline" size="sm" icon={Copy} onClick={copyFullDocument} disabled={!activePlan}>
             Copy All
           </Button>
@@ -828,6 +918,22 @@ export function PRDGeneratorPage() {
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
+                    {/* Quality Audit Action */}
+                    <Button
+                      size="xs"
+                      variant={validationResult ? 'secondary' : 'outline'}
+                      icon={isValidating ? Loader2 : ShieldCheck}
+                      disabled={isValidating}
+                      onClick={() => {
+                        setShowValidationPanel(true)
+                        if (!validationResult) {
+                          handleRunValidation()
+                        }
+                      }}
+                    >
+                      {isValidating ? 'Auditing...' : validationResult ? `Audit: ${validationResult.summary?.quality_score}/100` : 'Run Quality Audit'}
+                    </Button>
+
                     {/* Submit for Review: eligible when in draft or changes requested */}
                     {(isDraft || isRejected) && (
                       <Button
@@ -897,6 +1003,19 @@ export function PRDGeneratorPage() {
                 )}
               </div>
 
+              {/* Validation Audit Drawer/Panel */}
+              {showValidationPanel && (
+                <div className="mb-6">
+                  <PRDValidationPanel
+                    validationResult={validationResult}
+                    isValidating={isValidating}
+                    onRunValidation={() => handleRunValidation()}
+                    onNavigateToSection={handleNavigateToSection}
+                    onClose={() => setShowValidationPanel(false)}
+                  />
+                </div>
+              )}
+
               {/* 13 Structured Sections */}
               <div className="space-y-6">
                 {sectionsConfig.map(({ key, title }) => {
@@ -905,7 +1024,12 @@ export function PRDGeneratorPage() {
                   // Section 9: Interactive User Story Studio
                   if (key === 'userStories') {
                     return (
-                      <div key={key} className="space-y-3">
+                      <div key={key} id={`prd-section-${key}`} className="space-y-3 transition-all rounded-xl">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+                            {title}
+                          </h3>
+                        </div>
                         <UserStoryStudio
                           stories={structuredStories}
                           isApproved={isApproved}
@@ -928,7 +1052,8 @@ export function PRDGeneratorPage() {
                     return (
                       <div
                         key={key}
-                        className="p-4 rounded-xl bg-slate-50/60 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80"
+                        id={`prd-section-${key}`}
+                        className="p-4 rounded-xl bg-slate-50/60 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80 transition-all"
                       >
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
@@ -996,6 +1121,7 @@ export function PRDGeneratorPage() {
                   return (
                     <div
                       key={key}
+                      id={`prd-section-${key}`}
                       className="p-4 rounded-xl bg-slate-50/60 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80 transition-all"
                     >
                       <div className="flex items-center justify-between mb-2">
@@ -1234,6 +1360,91 @@ export function PRDGeneratorPage() {
               onClick={handleRejectPlan}
             >
               {isReviewing ? 'Submitting...' : 'Submit Changes Requested'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Unresolved Quality Issues Warning Modal */}
+      <Modal
+        isOpen={Boolean(unresolvedWarningModal)}
+        onClose={() => setUnresolvedWarningModal(null)}
+        title="Unresolved Blocking Quality Issues"
+        subtitle="Deterministic PRD Quality & Traceability Audit detected blocking issues"
+      >
+        <div className="space-y-4">
+          <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-amber-900 dark:text-amber-200 block mb-1">
+                  Quality Audit Warning (Score: {validationResult?.summary?.quality_score || 0}/100)
+                </span>
+                <p className="text-amber-700 dark:text-amber-300">
+                  This PRD currently contains{' '}
+                  <strong>{validationResult?.summary?.critical_issues || 0} critical</strong> and{' '}
+                  <strong>{validationResult?.summary?.high_severity_issues || 0} high-severity</strong> blocking issues that should be addressed before review sign-off.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+            {validationResult?.issues
+              ?.filter(i => i.severity === 'critical' || i.severity === 'high')
+              ?.slice(0, 5)
+              ?.map(issue => (
+                <div
+                  key={issue.issue_id}
+                  className="p-2 rounded-lg bg-white dark:bg-navy-900 border border-slate-200 dark:border-slate-800 text-xs flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                        issue.severity === 'critical'
+                          ? 'bg-rose-500/10 text-rose-600'
+                          : 'bg-amber-500/10 text-amber-600'
+                      }`}
+                    >
+                      {issue.severity}
+                    </span>
+                    <span className="text-slate-800 dark:text-slate-200 font-medium">
+                      {issue.title}
+                    </span>
+                  </div>
+                  <span className="font-mono text-[10px] text-slate-400">
+                    {issue.section_key}
+                  </span>
+                </div>
+              ))}
+          </div>
+
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            As a Product Manager, you have authoritative override privilege. You may review and resolve these findings first, or proceed with{' '}
+            {unresolvedWarningModal?.action === 'approve' ? 'approval' : 'submission'}.
+          </p>
+
+          <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setUnresolvedWarningModal(null)
+                setShowValidationPanel(true)
+              }}
+            >
+              Review Issues First
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (unresolvedWarningModal?.action === 'approve') {
+                  handleApprovePlan(true)
+                } else {
+                  handleSubmitForReview(true)
+                }
+              }}
+            >
+              Proceed Anyway
             </Button>
           </div>
         </div>

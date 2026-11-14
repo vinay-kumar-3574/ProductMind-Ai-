@@ -6,7 +6,7 @@ LLM plan generation, human review lifecycle, and MongoDB PRD persistence.
 
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from bson import ObjectId
 from fastapi import HTTPException, status
 
@@ -31,6 +31,7 @@ from app.ai.agents.product_planning.schemas import (
     SuccessMetric,
     RiskItem,
     RoadmapPhase,
+    PRDValidationResult,
 )
 from app.core.enums import PlatformRole, MembershipStatus, PRDStatus
 from app.models.auth import User
@@ -1616,6 +1617,83 @@ class ProductPlanningService:
             reviewed_at=prd.reviewed_at,
             created_at=prd.created_at,
             updated_at=prd.updated_at,
+        )
+
+    async def validate_plan(
+        self,
+        planning_id: str,
+        user: User,
+        workspace_id: Optional[str] = None,
+    ) -> PRDValidationResult:
+        """
+        Validates the quality, completeness, traceability, acceptance criteria,
+        metrics, and risks of a stored PRD without mutating or modifying the document in MongoDB Atlas.
+        """
+        if not planning_id or not ObjectId.is_valid(planning_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid planning ID format: '{planning_id}'",
+            )
+        if not self.prd_repo:
+            raise HTTPException(status_code=500, detail="PRD repository uninitialized")
+
+        plan = await self.prd_repo.find_by_id(ObjectId(planning_id))
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product plan '{planning_id}' not found",
+            )
+
+        await self.verify_workspace_access(user, plan.workspace_id)
+        if workspace_id and str(plan.workspace_id) != str(workspace_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product plan '{planning_id}' does not belong to workspace '{workspace_id}'",
+            )
+
+        # Retrieve feature group if available
+        feature_group = None
+        if self.feature_group_repo and plan.feature_group_id:
+            try:
+                feature_group = await self.feature_group_repo.find_by_id(
+                    plan.feature_group_id,
+                    workspace_id=plan.workspace_id,
+                )
+            except Exception as e:
+                logger.warning("Could not pre-fetch feature group '%s': %s", plan.feature_group_id, e)
+
+        # Retrieve valid feedback IDs in this workspace for traceability check
+        workspace_feedback_ids: Set[str] = set()
+        if self.feedback_repo:
+            try:
+                feedbacks = await self.feedback_repo.find_by_workspace(plan.workspace_id, limit=5000)
+                workspace_feedback_ids = {str(getattr(f, "id", "")) for f in feedbacks if getattr(f, "id", None)}
+            except Exception as e:
+                logger.warning("Could not pre-fetch workspace feedback IDs: %s", e)
+
+        # Convert plan model to dict for validation inspection
+        plan_dict = plan.model_dump(by_alias=True)
+        # Also ensure canonical fields are populated
+        plan_dict["sections"] = plan.sections.model_dump() if hasattr(plan.sections, "model_dump") else plan.sections
+        plan_dict["id"] = str(plan.id)
+        plan_dict["title"] = plan.title
+        plan_dict["version"] = plan.version
+        plan_dict["status"] = str(plan.status.value if hasattr(plan.status, "value") else plan.status)
+        plan_dict["user_stories"] = plan.user_stories or []
+        plan_dict["technical_requirements"] = plan.technical_requirements or []
+        plan_dict["success_metrics"] = plan.success_metrics or []
+        plan_dict["risk_analysis"] = plan.risk_analysis or []
+        plan_dict["roadmap_recommendations"] = plan.roadmap_recommendations or []
+        plan_dict["supporting_evidence"] = plan.supporting_evidence or []
+        plan_dict["structured_prd"] = plan.structured_prd
+
+        # Run deterministic validation without modifying database
+        from app.ai.agents.product_planning.validator import validate_product_plan
+        return validate_product_plan(
+            prd_data=plan_dict,
+            feature_group=feature_group,
+            workspace_feedback_ids=workspace_feedback_ids,
+            workspace_id=str(plan.workspace_id),
         )
 
     @classmethod

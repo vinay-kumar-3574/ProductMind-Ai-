@@ -27,13 +27,22 @@ export function parseGivenWhenThen(text) {
 
 /**
  * Formats given, when, then components into canonical Given-When-Then text.
+ * Accepts either an object { given, when, then } or 3 positional string arguments.
  */
-export function formatGivenWhenThen({ given, when, then }) {
-  const g = (given || '').trim()
-  const w = (when || '').trim()
-  const t = (then || '').trim()
+export function formatGivenWhenThen(givenOrObj, whenArg, thenArg) {
+  let g, w, t
+  if (typeof givenOrObj === 'object' && givenOrObj !== null) {
+    g = (givenOrObj.given || '').trim()
+    w = (givenOrObj.when || '').trim()
+    t = (givenOrObj.then || '').trim()
+  } else {
+    g = (givenOrObj || '').trim()
+    w = (whenArg || '').trim()
+    t = (thenArg || '').trim()
+  }
   if (g && w && t) {
-    return `Given ${g}, When ${w}, Then ${t}`
+    const formattedThen = t.endsWith('.') ? t : `${t}.`
+    return `Given ${g}, When ${w}, Then ${formattedThen}`
   }
   return g || w || t || ''
 }
