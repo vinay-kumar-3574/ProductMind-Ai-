@@ -47,25 +47,9 @@ export function UserStoryStudio({
 
   const handleStartAdd = () => {
     setFormError(null)
-    let maxStoryNum = 0
-    stories.forEach(s => {
-      const match = String(s.story_id).match(/US-(\d+)/i)
-      if (match) {
-        const num = parseInt(match[1], 10)
-        if (num > maxStoryNum) maxStoryNum = num
-      }
-    })
-    const nextStoryId = `US-${String(maxStoryNum + 1).padStart(3, '0')}`
-
-    let maxAcNum = 0
-    allExistingCriterionIds.forEach(id => {
-      const match = String(id).match(/AC-(\d+)/i)
-      if (match) {
-        const num = parseInt(match[1], 10)
-        if (num > maxAcNum) maxAcNum = num
-      }
-    })
-    const nextAcId = `AC-${String(maxAcNum + 1).padStart(3, '0')}`
+    const nextStoryNum = stories.length + 1
+    const nextStoryId = `US-${String(nextStoryNum).padStart(3, '0')}`
+    const nextAcId = `AC-${String(allExistingCriterionIds.length + 1).padStart(3, '0')}`
 
     setNewForm({
       story_id: nextStoryId,
@@ -205,7 +189,7 @@ export function UserStoryStudio({
               onClick={onRegenerate}
               title={isApproved ? 'Approved PRD is locked' : 'Regenerate user stories with AI'}
             >
-              AI Assist
+              AI Regenerate
             </Button>
           )}
 
@@ -429,3 +413,4 @@ export function UserStoryStudio({
 }
 
 export default UserStoryStudio
+

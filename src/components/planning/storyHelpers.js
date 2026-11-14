@@ -27,21 +27,13 @@ export function parseGivenWhenThen(text) {
 
 /**
  * Formats given, when, then components into canonical Given-When-Then text.
- * Supports both object argument ({ given, when, then }) and positional arguments (given, when, then).
  */
-export function formatGivenWhenThen(givenOrObj, whenArg = '', thenArg = '') {
-  let g = '', w = '', t = ''
-  if (typeof givenOrObj === 'object' && givenOrObj !== null) {
-    g = (givenOrObj.given || '').trim()
-    w = (givenOrObj.when || '').trim()
-    t = (givenOrObj.then || '').trim()
-  } else {
-    g = (givenOrObj || '').trim()
-    w = (whenArg || '').trim()
-    t = (thenArg || '').trim()
-  }
+export function formatGivenWhenThen({ given, when, then }) {
+  const g = (given || '').trim()
+  const w = (when || '').trim()
+  const t = (then || '').trim()
   if (g && w && t) {
-    return `Given ${g}, When ${w}, Then ${t}.`
+    return `Given ${g}, When ${w}, Then ${t}`
   }
   return g || w || t || ''
 }
@@ -198,3 +190,4 @@ export function validateAcceptanceCriterion(criterion, existingCriterionIds = []
   }
   return null
 }
+

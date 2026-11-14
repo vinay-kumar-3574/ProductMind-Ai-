@@ -55,11 +55,9 @@ export function AcceptanceCriteriaList({
   criteria = [],
   storyId = '',
   isApproved = false,
-  onChangeCriteria,
-  onChange,
+  onChangeCriteria = () => {},
   allExistingCriterionIds = [],
 }) {
-  const changeHandler = onChangeCriteria || onChange || (() => {})
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState(null)
   const [isAdding, setIsAdding] = useState(false)
@@ -129,19 +127,8 @@ export function AcceptanceCriteriaList({
   // Start adding a new criterion
   const handleStartAdd = () => {
     setErrorMsg(null)
-    const combinedIds = Array.from(new Set([
-      ...criteria.map(c => c.criterion_id),
-      ...allExistingCriterionIds,
-    ]))
-    let maxNum = 0
-    combinedIds.forEach(id => {
-      const match = String(id).match(/AC-(\d+)/i)
-      if (match) {
-        const num = parseInt(match[1], 10)
-        if (num > maxNum) maxNum = num
-      }
-    })
-    const nextId = `AC-${String(maxNum + 1).padStart(3, '0')}`
+    const existingCount = criteria.length + allExistingCriterionIds.length + 1
+    const nextId = `AC-${String(existingCount).padStart(3, '0')}`
 
     setAddForm({
       criterion_id: nextId,
@@ -195,7 +182,7 @@ export function AcceptanceCriteriaList({
       related_story_id: storyId,
     }
 
-    changeHandler([...criteria, newCriterion])
+    onChangeCriteria([...criteria, newCriterion])
     setIsAdding(false)
     setAddForm(null)
   }
@@ -237,7 +224,7 @@ export function AcceptanceCriteriaList({
       return c
     })
 
-    changeHandler(updated)
+    onChangeCriteria(updated)
     setEditingId(null)
     setEditForm(null)
   }
@@ -245,7 +232,7 @@ export function AcceptanceCriteriaList({
   // Delete criterion
   const handleDelete = (cId) => {
     const updated = criteria.filter(c => c.criterion_id !== cId)
-    changeHandler(updated)
+    onChangeCriteria(updated)
     setConfirmDeleteId(null)
   }
 
@@ -406,27 +393,14 @@ export function AcceptanceCriteriaList({
                     </span>
                     {renderScenarioBadge(item.scenario_type)}
                     {renderOriginBadge(item.origin)}
-                    <button
-                      type="button"
-                      disabled={isApproved}
-                      onClick={() => {
-                        const updated = criteria.map(c =>
-                          c.criterion_id === item.criterion_id ? { ...c, testable: !c.testable } : c
-                        )
-                        changeHandler(updated)
-                      }}
-                      title={item.testable ? 'Mark as non-testable' : 'Mark as testable'}
-                      className="cursor-pointer"
-                    >
-                      {item.testable ? (
-                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-medium hover:underline">
-                          <CheckCircle2 className="w-2.5 h-2.5" />
-                          Testable
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400 italic hover:underline">Manual Review</span>
-                      )}
-                    </button>
+                    {item.testable ? (
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-medium">
+                        <CheckCircle2 className="w-2.5 h-2.5" />
+                        Testable
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 italic">Manual Review</span>
+                    )}
                     {item.requires_confirmation && (
                       <span className="text-[10px] text-amber-500 font-semibold flex items-center gap-0.5">
                         <AlertCircle className="w-2.5 h-2.5" />
@@ -590,3 +564,4 @@ export function AcceptanceCriteriaList({
 }
 
 export default AcceptanceCriteriaList
+

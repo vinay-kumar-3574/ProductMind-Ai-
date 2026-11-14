@@ -905,44 +905,7 @@ export function PRDGeneratorPage() {
                   // Section 9: Interactive User Story Studio
                   if (key === 'userStories') {
                     return (
-                      <div
-                        key={key}
-                        className="p-4 rounded-xl bg-slate-50/60 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80 transition-all space-y-4"
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-xs font-bold uppercase tracking-wider text-brand-600 dark:text-brand-400">
-                              {title}
-                            </h3>
-                            {isRegeneratingThis && (
-                              <span className="inline-flex items-center gap-1 text-[10px] text-brand-500 font-semibold">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                Regenerating with Groq...
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleOpenRegenerate(key, title)}
-                              disabled={isApproved || Boolean(isRegeneratingSection)}
-                              className="text-[10px] text-slate-400 hover:text-brand-500 disabled:opacity-40 disabled:hover:text-slate-400 flex items-center gap-1 cursor-pointer"
-                              title={isApproved ? 'Section regeneration disabled on approved PRD' : `Regenerate ${title} with AI`}
-                            >
-                              <Sparkles className="w-3 h-3 text-brand-500" />
-                              <span>Regenerate</span>
-                            </button>
-
-                            <button
-                              onClick={() => copySection(title, editableSections[key] || '')}
-                              className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
-                            >
-                              <Copy className="w-3 h-3" />
-                              <span>Copy</span>
-                            </button>
-                          </div>
-                        </div>
-
+                      <div key={key} className="space-y-3">
                         <UserStoryStudio
                           stories={structuredStories}
                           isApproved={isApproved}
@@ -951,16 +914,6 @@ export function PRDGeneratorPage() {
                           onChangeStories={handleStoriesChange}
                           onRegenerate={() => handleOpenRegenerate(key, title)}
                         />
-
-                        {/* Collapsible Raw Markdown Spec for Section 9 */}
-                        <details className="pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400">
-                          <summary className="cursor-pointer hover:text-brand-500 font-semibold select-none">
-                            View Markdown Spec (Section 9)
-                          </summary>
-                          <pre className="mt-2 p-2.5 rounded-lg bg-white dark:bg-navy-950 border border-slate-200 dark:border-slate-800 font-mono text-[10px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap overflow-x-auto">
-                            {editableSections[key] || ''}
-                          </pre>
-                        </details>
                       </div>
                     )
                   }
@@ -988,16 +941,6 @@ export function PRDGeneratorPage() {
                           </div>
 
                           <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleOpenRegenerate(key, title)}
-                              disabled={isApproved || Boolean(isRegeneratingSection)}
-                              className="text-[10px] text-slate-400 hover:text-brand-500 disabled:opacity-40 disabled:hover:text-slate-400 flex items-center gap-1 cursor-pointer"
-                              title={isApproved ? 'Section regeneration disabled on approved PRD' : `Regenerate ${title} with AI`}
-                            >
-                              <Sparkles className="w-3 h-3 text-brand-500" />
-                              <span>Regenerate</span>
-                            </button>
-
                             <button
                               onClick={() => copySection(title, editableSections[key] || '')}
                               className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"

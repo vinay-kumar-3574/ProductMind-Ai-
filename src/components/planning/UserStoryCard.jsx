@@ -35,15 +35,10 @@ export function extractCapability(description, persona, businessValue) {
 export function UserStoryCard({
   story,
   isApproved = false,
-  onUpdateStory,
-  onDeleteStory,
-  onUpdate,
-  onDelete,
+  onUpdateStory = () => { },
+  onDeleteStory = () => { },
   allExistingCriterionIds = [],
-  allExistingStoryIds = [],
 }) {
-  const updateHandler = onUpdateStory || onUpdate || (() => {})
-  const deleteHandler = onDeleteStory || onDelete || (() => {})
   const [isExpanded, setIsExpanded] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -144,7 +139,7 @@ export function UserStoryCard({
       priority,
     }
 
-    updateHandler(updated)
+    onUpdateStory(updated)
     setIsEditing(false)
   }
 
@@ -153,7 +148,7 @@ export function UserStoryCard({
       ...story,
       acceptance_criteria: newCriteria,
     }
-    updateHandler(updated)
+    onUpdateStory(updated)
   }
 
   const criteriaList = story.acceptance_criteria || []
@@ -168,9 +163,8 @@ export function UserStoryCard({
             {story.story_id}
           </span>
           <span
-            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-              priorityColorMap[String(story.priority || 'high').toLowerCase()] || priorityColorMap.high
-            }`}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${priorityColorMap[String(story.priority || 'high').toLowerCase()] || priorityColorMap.high
+              }`}
           >
             {story.priority || 'High'} Priority
           </span>
@@ -183,29 +177,25 @@ export function UserStoryCard({
           ) : (
             <span className="text-[10px] text-amber-500 font-semibold flex items-center gap-0.5">
               <AlertCircle className="w-3 h-3" />
-              Needs PM Review
+              Requires Confirmation
             </span>
           )}
         </div>
 
         <div className="flex items-center gap-1.5 self-end sm:self-auto">
-          {!isEditing && (
+          {!isEditing && !isApproved && (
             <>
               <button
                 onClick={handleStartEdit}
-                disabled={isApproved}
-                className="p-1.5 text-slate-400 hover:text-brand-500 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-slate-400 rounded-lg hover:bg-slate-50 dark:hover:bg-navy-900 cursor-pointer"
-                title={isApproved ? 'Editing disabled on approved PRD' : 'Edit User Story'}
-                aria-label="Edit"
+                className="p-1.5 text-slate-400 hover:text-brand-500 rounded-lg hover:bg-slate-50 dark:hover:bg-navy-900 cursor-pointer"
+                title="Edit User Story"
               >
                 <Edit2 className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => setConfirmDelete(true)}
-                disabled={isApproved}
-                className="p-1.5 text-slate-400 hover:text-rose-500 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-slate-400 rounded-lg hover:bg-slate-50 dark:hover:bg-navy-900 cursor-pointer"
-                title={isApproved ? 'Deleting disabled on approved PRD' : 'Delete User Story'}
-                aria-label="Delete"
+                className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-50 dark:hover:bg-navy-900 cursor-pointer"
+                title="Delete User Story"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -232,7 +222,7 @@ export function UserStoryCard({
             <Button size="xs" variant="secondary" onClick={() => setConfirmDelete(false)}>
               Cancel
             </Button>
-            <Button size="xs" variant="danger" onClick={() => deleteHandler(story.story_id)}>
+            <Button size="xs" variant="danger" onClick={() => onDeleteStory(story.story_id)}>
               Confirm Delete
             </Button>
           </div>
@@ -380,3 +370,4 @@ export function UserStoryCard({
 }
 
 export default UserStoryCard
+
