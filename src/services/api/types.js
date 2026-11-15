@@ -109,4 +109,20 @@ export const API_ENDPOINTS = {
     CONVERSATION: (conversationId) => `/api/v1/copilot/conversations/${conversationId}`,
     ARCHIVE: (conversationId) => `/api/v1/copilot/conversations/${conversationId}`,
   },
+
+  // Roadmap & Execution Planning
+  ROADMAP: {
+    LIST: '/api/v1/roadmap/',
+    CREATE: '/api/v1/roadmap/',
+    DETAIL: (id) => `/api/v1/roadmap/${id}`,
+    UPDATE: (id) => `/api/v1/roadmap/${id}`,
+    ARCHIVE: (id) => `/api/v1/roadmap/${id}`,
+    ITEMS: '/api/v1/roadmap/items',
+    ITEM_CREATE: '/api/v1/roadmap/items',
+    ITEM_DETAIL: (id) => `/api/v1/roadmap/items/${id}`,
+    ITEM_UPDATE: (id) => `/api/v1/roadmap/items/${id}`,
+    ITEM_DELETE: (id) => `/api/v1/roadmap/items/${id}`,
+    CANDIDATES: '/api/v1/roadmap/candidates',
+    PROMOTE_PRD: '/api/v1/roadmap/promote-prd',
+  },
 }
