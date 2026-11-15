@@ -15,6 +15,21 @@ from typing import Any, Dict, List, Literal, Optional
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from app.ai.agents.product_intelligence import (
+    ExecutiveBriefingRequest,
+    ExecutiveBriefingResponse,
+    ExecutiveBriefingResult,
+    ProductIntelligenceAgent,
+)
+from app.ai.exceptions import (
+    AIAuthenticationException,
+    AIConfigurationException,
+    AIProviderException,
+    AIRateLimitException,
+    AIServiceException,
+    AITimeoutException,
+)
+from app.ai.llm_service import LLMService, get_llm_service
 from app.api.dependencies import (
     get_current_user,
     get_product_intelligence_service,
@@ -442,3 +457,102 @@ async def export_report(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# -----------------------------------------------------------------------------
+# 5. AI Strategic Insights & Executive Briefing Generation
+# -----------------------------------------------------------------------------
+@router.post(
+    "/executive-briefing",
+    response_model=ExecutiveBriefingResponse,
+    summary="Generate evidence-backed executive product briefing via AI",
+)
+async def generate_executive_briefing(
+    payload: ExecutiveBriefingRequest,
+    current_user: User = Depends(get_current_user),
+    service: ProductIntelligenceService = Depends(get_product_intelligence_service),
+    llm_service: LLMService = Depends(get_llm_service),
+) -> ExecutiveBriefingResponse:
+    """
+    Synthesizes deterministic metrics into a structured leadership briefing:
+    - Zero-fabrication enforcement
+    - Strict token budgeting (< 2,000 tokens)
+    - Source-grounded strategic recommendations
+    """
+    # 1. Retrieve verified deterministic metrics
+    summary = await service.get_product_intelligence(
+        workspace_id=payload.workspace_id,
+        user=current_user,
+        time_range=payload.time_range,
+    )
+
+    # 2. Compact context dictionary to protect Groq token limits
+    bounded_metrics = {
+        "workspaceId": payload.workspace_id,
+        "timeRange": payload.time_range,
+        "healthScore": summary.health_score.model_dump(),
+        "customerSentiment": summary.sentiment_metrics.model_dump(),
+        "featureAdoption": summary.adoption_metrics.model_dump(),
+        "deliveryPredictability": summary.delivery_metrics.model_dump(),
+        "prioritizationAlignment": summary.alignment_metrics.model_dump(),
+        "deliveryRisk": {
+            "overallRiskScore": summary.delivery_risk.overall_risk_score,
+            "riskLevel": summary.delivery_risk.risk_level,
+            "overdueCount": summary.delivery_risk.overdue_count,
+            "blockedCount": summary.delivery_risk.blocked_count,
+            "itemsAtRisk": [item.model_dump() for item in summary.delivery_risk.items_at_risk[:5]],
+        },
+        "featureOpportunities": [opp.model_dump() for opp in summary.feature_opportunities[:5]],
+        "topCustomerPainPoints": [pp.model_dump() for pp in summary.top_customer_pain_points[:5]],
+        "dataCoverage": summary.data_coverage,
+        "diagnostics": summary.missing_data_diagnostics,
+    }
+
+    agent = ProductIntelligenceAgent(llm_service=llm_service)
+
+    try:
+        briefing = await agent.generate_briefing(bounded_metrics)
+    except AIRateLimitException as exc:
+        logger.warning("Executive briefing generation rate-limited: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="AI provider rate limit reached. Please retry in a few moments.",
+        )
+    except AITimeoutException as exc:
+        logger.warning("Executive briefing generation timeout: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="AI model request timed out during executive briefing generation.",
+        )
+    except AIAuthenticationException as exc:
+        logger.error("Executive briefing auth error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AI provider authentication failed.",
+        )
+    except (AIConfigurationException, AIProviderException) as exc:
+        logger.error("Executive briefing provider error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"AI service unavailable: {getattr(exc, 'message', str(exc))}",
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error generating executive briefing: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate executive briefing.",
+        )
+
+    return ExecutiveBriefingResponse(
+        workspaceId=payload.workspace_id,
+        generatedAt=datetime.now(timezone.utc),
+        briefing=briefing,
+        sourceSummary={
+            "healthScore": summary.health_score.score,
+            "healthStatus": summary.health_score.status,
+            "sentimentIndex": summary.sentiment_metrics.sentiment_index,
+            "deliveryRiskScore": summary.delivery_risk.overall_risk_score,
+            "opportunitiesCount": len(summary.feature_opportunities),
+        },
+    )
+
