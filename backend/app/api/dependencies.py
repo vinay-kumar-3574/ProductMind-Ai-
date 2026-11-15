@@ -26,6 +26,7 @@ from app.repositories import (
     AnalyticsEventRepository,
     AnalyticsBatchRepository,
     PRDRepository,
+    ProductRoadmapRepository,
     RoadmapRepository,
     ReleaseRepository,
     CopilotConversationRepository,
@@ -147,6 +148,12 @@ def get_roadmap_repository(
     db: AsyncIOMotorDatabase = Depends(get_mongo_db),
 ) -> RoadmapRepository:
     return RoadmapRepository(db)
+
+
+def get_product_roadmap_repository(
+    db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+) -> ProductRoadmapRepository:
+    return ProductRoadmapRepository(db)
 
 
 def get_release_repository(
@@ -385,4 +392,25 @@ def get_copilot_conversation_service(
         message_repo=CopilotMessageRepository(db),
         copilot_ai_service=ai_service,
     )
+
+
+def get_roadmap_service(
+    roadmap_repo: RoadmapRepository = Depends(get_roadmap_repository),
+    product_roadmap_repo: ProductRoadmapRepository = Depends(get_product_roadmap_repository),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+    membership_repo: WorkspaceMembershipRepository = Depends(get_workspace_membership_repository),
+    prd_repo: PRDRepository = Depends(get_prd_repository),
+    feature_group_repo: FeatureGroupRepository = Depends(get_feature_group_repository),
+):
+    from app.services.roadmap_service import RoadmapService
+
+    return RoadmapService(
+        roadmap_repo=roadmap_repo,
+        product_roadmap_repo=product_roadmap_repo,
+        workspace_repo=workspace_repo,
+        membership_repo=membership_repo,
+        prd_repo=prd_repo,
+        feature_group_repo=feature_group_repo,
+    )
+
 

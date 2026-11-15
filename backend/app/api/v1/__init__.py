@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     planning_ai,
     orchestrator_ai,
     copilot,
+    roadmap,
 )
 
 api_router = APIRouter()
@@ -57,3 +58,6 @@ api_router.include_router(orchestrator_ai.alias_router)
 
 # Conversational Product Copilot
 api_router.include_router(copilot.router)
+
+# Product Roadmap & Delivery Planning
+api_router.include_router(roadmap.router)

@@ -29,6 +29,7 @@ class Collections:
     FEATURES = "features"
     PRIORITIZATION_SCENARIOS = "prioritization_scenarios"
     PRDS = "prds"
+    PRODUCT_ROADMAPS = "product_roadmaps"
     ROADMAP_ITEMS = "roadmap_items"
     RELEASES = "releases"
     PRODUCT_EXPERIMENTS = "product_experiments"
@@ -64,6 +65,7 @@ class Collections:
             cls.FEATURES,
             cls.PRIORITIZATION_SCENARIOS,
             cls.PRDS,
+            cls.PRODUCT_ROADMAPS,
             cls.ROADMAP_ITEMS,
             cls.RELEASES,
             cls.PRODUCT_EXPERIMENTS,

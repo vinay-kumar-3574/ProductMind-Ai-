@@ -110,6 +110,26 @@ class PRDStatus(str, Enum):
     ARCHIVED = "Archived"
 
 
+class ProductRoadmapType(str, Enum):
+    STRATEGIC = "Strategic"
+    PRODUCT = "Product"
+    ENGINEERING = "Engineering"
+    RELEASE = "Release"
+
+
+class RoadmapTimeHorizon(str, Enum):
+    QUARTERLY = "Quarterly"
+    HALF_YEARLY = "Half-Yearly"
+    YEARLY = "Yearly"
+    CUSTOM = "Custom"
+
+
+class ProductRoadmapStatus(str, Enum):
+    ACTIVE = "Active"
+    ARCHIVED = "Archived"
+    DRAFT = "Draft"
+
+
 class RoadmapStatus(str, Enum):
     PLANNED = "Planned"
     IN_PROGRESS = "In Progress"

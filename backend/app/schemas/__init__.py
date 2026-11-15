@@ -36,7 +36,16 @@ from app.schemas.analytics import (
     AnalyticsUsageTrendsResponse,
 )
 from app.schemas.prd import PRDCreate, PRDUpdate, PRDResponse
-from app.schemas.roadmap import RoadmapItemCreate, RoadmapItemUpdate, RoadmapItemResponse
+from app.schemas.roadmap import (
+    ProductRoadmapCreate,
+    ProductRoadmapUpdate,
+    ProductRoadmapResponse,
+    ProductRoadmapListResponse,
+    RoadmapItemCreate,
+    RoadmapItemUpdate,
+    RoadmapItemResponse,
+    RoadmapItemListResponse,
+)
 from app.schemas.copilot import (
     CopilotConversationCreate,
     CopilotConversationResponse,
@@ -76,9 +85,14 @@ __all__ = [
     "PRDCreate",
     "PRDUpdate",
     "PRDResponse",
+    "ProductRoadmapCreate",
+    "ProductRoadmapUpdate",
+    "ProductRoadmapResponse",
+    "ProductRoadmapListResponse",
     "RoadmapItemCreate",
     "RoadmapItemUpdate",
     "RoadmapItemResponse",
+    "RoadmapItemListResponse",
     "CopilotConversationCreate",
     "CopilotConversationResponse",
     "CopilotMessageCreate",
