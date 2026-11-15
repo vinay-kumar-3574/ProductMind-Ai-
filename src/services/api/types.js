@@ -125,4 +125,17 @@ export const API_ENDPOINTS = {
     CANDIDATES: '/api/v1/roadmap/candidates',
     PROMOTE_PRD: '/api/v1/roadmap/promote-prd',
   },
+
+  // Executive Reporting & Intelligence
+  REPORTS: {
+    EXECUTIVE_SUMMARY: '/api/v1/reports/executive-summary',
+    DELIVERY_RISK: '/api/v1/reports/delivery-risk',
+    SAVED_LIST: '/api/v1/reports/saved',
+    SAVED_CREATE: '/api/v1/reports/saved',
+    SAVED_DETAIL: (id) => `/api/v1/reports/saved/${id}`,
+    SAVED_UPDATE: (id) => `/api/v1/reports/saved/${id}`,
+    SAVED_DELETE: (id) => `/api/v1/reports/saved/${id}`,
+    EXPORT: '/api/v1/reports/export',
+    BRIEFING: '/api/v1/reports/executive-briefing',
+  },
 }

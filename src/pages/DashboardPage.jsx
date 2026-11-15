@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
@@ -28,9 +28,11 @@ import {
   Printer,
   Download,
   BarChart3,
+  Activity,
 } from 'lucide-react'
 import { exportFeedbackToCSV, exportFeaturesToCSV } from '../services/csvService'
 import { orchestratorService } from '../services/api/orchestratorService'
+import { reportingService } from '../services/api/reportingService'
 import { useWorkspace } from '../context/WorkspaceContext'
 import {
   Brain,
@@ -82,6 +84,28 @@ export function DashboardPage() {
   const [isExecutingPipeline, setIsExecutingPipeline] = useState(false)
   const [pipelineRun, setPipelineRun] = useState(null)
   const [pipelineError, setPipelineError] = useState(null)
+  const [executiveSummary, setExecutiveSummary] = useState(null)
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false)
+
+  useEffect(() => {
+    if (!currentWorkspace?.id) return
+    let isCancelled = false
+    setIsLoadingSummary(true)
+    reportingService
+      .getExecutiveSummary({ workspaceId: currentWorkspace.id, timeRange })
+      .then(data => {
+        if (!isCancelled) setExecutiveSummary(data)
+      })
+      .catch(err => {
+        console.warn('Failed to fetch executive summary:', err)
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoadingSummary(false)
+      })
+    return () => {
+      isCancelled = true
+    }
+  }, [currentWorkspace?.id, timeRange])
 
   const handleRunOrchestrator = async (mode = 'complete') => {
     if (!currentWorkspace?.id) return
@@ -159,7 +183,9 @@ export function DashboardPage() {
   const neutralSentiment = filteredFeedback.filter(f => f.sentiment === 'Neutral').length
   const avgCSAT = totalFeedbackCount > 0
     ? (((positiveSentiment * 5 + neutralSentiment * 3 + negativeSentiment * 1) / (totalFeedbackCount * 5)) * 5).toFixed(1)
-    : '4.2'
+    : executiveSummary?.customerSentiment?.totalAnalyzed > 0
+      ? (executiveSummary.customerSentiment.positiveRatio * 5).toFixed(1)
+      : 'N/A'
   const urgentRequestsCount = filteredFeedback.filter(f => f.priority === 'Urgent').length
   const prdCount = prds.length
 
@@ -324,6 +350,39 @@ export function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* Live Atlas Product Health Score Banner */}
+      {executiveSummary?.productHealthScore && (
+        <Card className="p-4 bg-gradient-to-r from-brand-500/10 via-electric-500/10 to-transparent border border-brand-500/30">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-brand-600/20 text-brand-600 dark:text-brand-400 flex items-center justify-center font-bold text-lg border border-brand-500/30">
+                <Activity className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">Product Health Score</h3>
+                  <Badge variant={executiveSummary.productHealthScore.score >= 70 ? 'success' : executiveSummary.productHealthScore.score >= 40 ? 'warning' : 'danger'}>
+                    {executiveSummary.productHealthScore.rating} ({executiveSummary.productHealthScore.score.toFixed(1)}/100)
+                  </Badge>
+                  <span className="text-[10px] text-slate-400 font-medium">Confidence: {executiveSummary.productHealthScore.confidence}</span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Cross-domain composite: Sentiment ({executiveSummary.productHealthScore.subScores?.customer_sentiment?.toFixed(0) ?? 'N/A'}), Adoption ({executiveSummary.productHealthScore.subScores?.feature_adoption?.toFixed(0) ?? 'N/A'}), Delivery ({executiveSummary.productHealthScore.subScores?.delivery_predictability?.toFixed(0) ?? 'N/A'}), Alignment ({executiveSummary.productHealthScore.subScores?.prioritization_alignment?.toFixed(0) ?? 'N/A'})
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="xs" variant="outline" onClick={() => navigate('/insights')}>
+                View Insights
+              </Button>
+              <Button size="xs" variant="primary" onClick={() => navigate('/reports')}>
+                Full Report
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* KPI Cards (6 Required) */}
       {isVisible('kpis') && (
