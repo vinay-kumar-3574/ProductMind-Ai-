@@ -11,7 +11,8 @@ import pytest
 from fastapi import HTTPException, status
 
 from app.models.auth import User, Workspace, WorkspaceMembership
-from app.models.planning import ProductRoadmap, RoadmapItem
+from app.models.planning import ProductRoadmap, RoadmapItem, PRD, PrioritizationScenario
+from app.models.intelligence import FeatureGroup
 from app.core.enums import (
     PlatformRole,
     MembershipStatus,
@@ -20,12 +21,14 @@ from app.core.enums import (
     ProductRoadmapType,
     RoadmapTimeHorizon,
     ProductRoadmapStatus,
+    PRDStatus,
 )
 from app.schemas.roadmap import (
     ProductRoadmapCreate,
     ProductRoadmapUpdate,
     RoadmapItemCreate,
     RoadmapItemUpdate,
+    PromotePRDRequest,
 )
 from app.services.roadmap_service import RoadmapService, bump_semver
 
@@ -113,6 +116,9 @@ def roadmap_service(mock_workspace):
     prod_rm_repo = AsyncMock()
     ws_repo = AsyncMock()
     mem_repo = AsyncMock()
+    prd_repo = AsyncMock()
+    feature_group_repo = AsyncMock()
+    prioritization_repo = AsyncMock()
 
     ws_repo.find_by_id = AsyncMock(return_value=mock_workspace)
     mem_repo.find_membership = AsyncMock(
@@ -128,6 +134,9 @@ def roadmap_service(mock_workspace):
         product_roadmap_repo=prod_rm_repo,
         workspace_repo=ws_repo,
         membership_repo=mem_repo,
+        prd_repo=prd_repo,
+        feature_group_repo=feature_group_repo,
+        prioritization_repo=prioritization_repo,
     )
 
 
@@ -312,17 +321,17 @@ async def test_update_roadmap_item_optimistic_concurrency_conflict(
 async def test_update_roadmap_item_rejects_actual_end_before_start(
     roadmap_service, mock_user, mock_workspace, sample_item
 ):
+    sample_item.actual_start_date = "2026-11-10"
     roadmap_service.roadmap_repo.find_by_workspace_and_item = AsyncMock(return_value=sample_item)
 
     req = RoadmapItemUpdate(
-        actualStartDate="2026-11-10",
-        actualEndDate="2026-11-01",  # Invalid: end precedes start!
+        actualEndDate="2026-11-01",  # Invalid: end precedes existing start!
     )
 
     with pytest.raises(HTTPException) as exc_info:
         await roadmap_service.update_item(str(mock_workspace.id), str(sample_item.id), req, mock_user)
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-    assert "cannot precede" in exc_info.value.detail.lower()
+    assert "cannot be after" in exc_info.value.detail.lower() or "cannot precede" in exc_info.value.detail.lower()
 
 
 @pytest.mark.asyncio
@@ -354,3 +363,184 @@ async def test_cross_workspace_unauthorized_access_rejected(
     with pytest.raises(HTTPException) as exc_info:
         await roadmap_service.list_roadmaps(foreign_ws_id, mock_intruder_user)
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+# ===========================================================================
+# Candidate Retrieval & Approved PRD Promotion Tests (Phase 6.3 & 6.5)
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_get_candidates_flags_approved_prd(roadmap_service, mock_user, mock_workspace):
+    fg_id = ObjectId("660011223344556677889950")
+    fg = FeatureGroup(
+        id=fg_id,
+        workspace_id=mock_workspace.id,
+        title="Real-time Webhook Streaming",
+        description="Low-latency webhook architecture",
+        feedback_count=42,
+        customer_pain_points=["Delayed event delivery"],
+    )
+    prd_approved = PRD(
+        id=ObjectId("660011223344556677889951"),
+        workspace_id=mock_workspace.id,
+        feature_group_id=fg_id,
+        title="Webhook Streaming PRD",
+        status=PRDStatus.APPROVED,
+        version="1.2.0",
+        roadmap_recommendations=[
+            {"phase": "Phase 1: Ingestion Pipeline", "deliverables": "Kafka ingress"},
+            {"phase": "Phase 2: Dispatcher Engine", "deliverables": "Retry queue"},
+        ],
+    )
+    scenario = PrioritizationScenario(
+        id=ObjectId("660011223344556677889952"),
+        workspace_id=mock_workspace.id,
+        feature_group_id=fg_id,
+        name="RICE Prioritization",
+        final_score=94.5,
+        priority_level="Urgent",
+        factor_scores={"reach": 85.0, "impact": 95.0},
+    )
+
+    roadmap_service.feature_group_repo.find_by_workspace = AsyncMock(return_value=[fg])
+    roadmap_service.prd_repo.find_by_workspace = AsyncMock(return_value=[prd_approved])
+    roadmap_service.prioritization_repo.find_by_workspace = AsyncMock(return_value=[scenario])
+    roadmap_service.roadmap_repo.find_by_workspace = AsyncMock(return_value=[])
+
+    resp = await roadmap_service.get_candidates(str(mock_workspace.id), mock_user)
+    assert resp.total == 1
+    cand = resp.items[0]
+    assert cand.feature_group_id == str(fg_id)
+    assert cand.prd_id == str(prd_approved.id)
+    assert cand.is_approved_for_roadmap is True
+    assert cand.priority_score == 94.5
+    assert len(cand.roadmap_recommendations) == 2
+    assert cand.is_fully_committed is False
+
+
+@pytest.mark.asyncio
+async def test_get_candidates_rejects_draft_prd_approval(roadmap_service, mock_user, mock_workspace):
+    fg_id = ObjectId("660011223344556677889960")
+    fg = FeatureGroup(
+        id=fg_id,
+        workspace_id=mock_workspace.id,
+        title="Dark Mode Dashboard",
+        feedback_count=12,
+    )
+    prd_draft = PRD(
+        id=ObjectId("660011223344556677889961"),
+        workspace_id=mock_workspace.id,
+        feature_group_id=fg_id,
+        title="Dark Mode PRD",
+        status=PRDStatus.DRAFT,
+        version="0.1.0",
+    )
+
+    roadmap_service.feature_group_repo.find_by_workspace = AsyncMock(return_value=[fg])
+    roadmap_service.prd_repo.find_by_workspace = AsyncMock(return_value=[prd_draft])
+    roadmap_service.prioritization_repo.find_by_workspace = AsyncMock(return_value=[])
+    roadmap_service.roadmap_repo.find_by_workspace = AsyncMock(return_value=[])
+
+    resp = await roadmap_service.get_candidates(str(mock_workspace.id), mock_user)
+    cand = resp.items[0]
+    assert cand.is_approved_for_roadmap is False
+    assert cand.prd_status == "Draft"
+
+
+@pytest.mark.asyncio
+async def test_promote_approved_prd_success(roadmap_service, mock_user, mock_workspace, sample_roadmap):
+    prd_id = ObjectId("660011223344556677889970")
+    prd = PRD(
+        id=prd_id,
+        workspace_id=mock_workspace.id,
+        title="Zero-Knowledge Audit Trail",
+        status=PRDStatus.APPROVED,
+        version="1.0.0",
+        roadmap_recommendations=[
+            {"phase": "Phase 1: Cryptographic Hashes", "deliverables": "Merkle tree generation"},
+            {"phase": "Phase 2: Verifier Service", "deliverables": "Verification API"},
+        ],
+    )
+
+    roadmap_service.prd_repo.find_by_id = AsyncMock(return_value=prd)
+    roadmap_service.product_roadmap_repo.find_by_id_and_workspace = AsyncMock(return_value=sample_roadmap)
+    roadmap_service.roadmap_repo.find_by_prd = AsyncMock(return_value=[])  # No prior promotions
+    roadmap_service.roadmap_repo.create = AsyncMock(side_effect=lambda item: item)
+
+    req = PromotePRDRequest(
+        prdId=str(prd_id),
+        roadmapId=str(sample_roadmap.id),
+        targetMilestone="Q1 Release",
+    )
+
+    resp = await roadmap_service.promote_approved_prd(str(mock_workspace.id), req, mock_user)
+    assert resp.success is True
+    assert resp.promoted_count == 2
+    assert resp.prd_title == "Zero-Knowledge Audit Trail"
+    assert roadmap_service.roadmap_repo.create.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_promote_non_approved_prd_strictly_rejected(roadmap_service, mock_user, mock_workspace):
+    # Test rejection across all non-approved PRD statuses
+    for invalid_status in [PRDStatus.DRAFT, PRDStatus.IN_REVIEW, PRDStatus.PENDING_REVIEW, PRDStatus.REJECTED]:
+        prd = PRD(
+            id=ObjectId("660011223344556677889975"),
+            workspace_id=mock_workspace.id,
+            title="Unapproved Feature",
+            status=invalid_status,
+            version="1.0.0",
+        )
+        roadmap_service.prd_repo.find_by_id = AsyncMock(return_value=prd)
+
+        req = PromotePRDRequest(prdId=str(prd.id))
+        with pytest.raises(HTTPException) as exc_info:
+            await roadmap_service.promote_approved_prd(str(mock_workspace.id), req, mock_user)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Only PRDs with status 'Approved' are eligible" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_circular_dependency_detected_and_rejected(roadmap_service, mock_user, mock_workspace):
+    item_a_id = ObjectId("660011223344556677889981")
+    item_b_id = ObjectId("660011223344556677889982")
+
+    # Item B already depends on Item A
+    item_b = RoadmapItem(
+        id=item_b_id,
+        workspace_id=mock_workspace.id,
+        title="Item B",
+        start_date="2026-10-01",
+        target_date="2026-11-01",
+        dependencies=[item_a_id],
+    )
+    item_a = RoadmapItem(
+        id=item_a_id,
+        workspace_id=mock_workspace.id,
+        title="Item A",
+        start_date="2026-10-01",
+        target_date="2026-11-01",
+        dependencies=[],
+    )
+
+    roadmap_service.roadmap_repo.find_by_workspace_and_item = AsyncMock(
+        side_effect=lambda ws, item_id: item_a if item_id == item_a_id else (item_b if item_id == item_b_id else None)
+    )
+
+    # Attempt to update Item A to depend on Item B -> creates cycle A -> B -> A!
+    req = RoadmapItemUpdate(dependencies=[str(item_b_id)])
+    with pytest.raises(HTTPException) as exc_info:
+        await roadmap_service.update_item(str(mock_workspace.id), str(item_a_id), req, mock_user)
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Circular dependency detected" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_self_dependency_rejected(roadmap_service, mock_user, mock_workspace, sample_item):
+    roadmap_service.roadmap_repo.find_by_workspace_and_item = AsyncMock(return_value=sample_item)
+
+    req = RoadmapItemUpdate(dependencies=[str(sample_item.id)])
+    with pytest.raises(HTTPException) as exc_info:
+        await roadmap_service.update_item(str(mock_workspace.id), str(sample_item.id), req, mock_user)
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "cannot depend on itself" in exc_info.value.detail

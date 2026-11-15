@@ -3,7 +3,7 @@ ProductMind AI — Roadmap Schemas (Pydantic DTOs)
 Defines request and response schemas for ProductRoadmap containers and RoadmapItems.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from app.core.enums import (
@@ -180,3 +180,69 @@ class RoadmapItemListResponse(BaseModel):
 
     total: int
     items: List[RoadmapItemResponse]
+
+
+# ---------------------------------------------------------------------------
+# Feature Prioritization & Approved PRD Candidate / Promotion Schemas
+# ---------------------------------------------------------------------------
+
+class RoadmapCandidateItem(BaseModel):
+    """Represents a feature group or PRD candidate eligible for roadmap promotion."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    feature_group_id: Optional[str] = Field(default=None, alias="featureGroupId")
+    title: str
+    description: str = ""
+    feedback_count: int = Field(default=0, alias="feedbackCount")
+    customer_pain_points: List[str] = Field(default_factory=list, alias="customerPainPoints")
+    sentiment_distribution: Optional[Dict[str, int]] = Field(default=None, alias="sentimentDistribution")
+    priority_score: Optional[float] = Field(default=None, alias="priorityScore")
+    priority_level: Optional[str] = Field(default=None, alias="priorityLevel")
+    priority_factors: Optional[Dict[str, float]] = Field(default=None, alias="priorityFactors")
+    prioritization_scenario_id: Optional[str] = Field(default=None, alias="prioritizationScenarioId")
+    prd_id: Optional[str] = Field(default=None, alias="prdId")
+    prd_title: Optional[str] = Field(default=None, alias="prdTitle")
+    prd_status: Optional[str] = Field(default=None, alias="prdStatus")
+    prd_version: Optional[str] = Field(default=None, alias="prdVersion")
+    is_approved_for_roadmap: bool = Field(default=False, alias="isApprovedForRoadmap")
+    roadmap_recommendations: List[Dict[str, Any]] = Field(default_factory=list, alias="roadmapRecommendations")
+    existing_roadmap_item_ids: List[str] = Field(default_factory=list, alias="existingRoadmapItemIds")
+    is_fully_committed: bool = Field(default=False, alias="isFullyCommitted")
+
+
+class RoadmapCandidateListResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    total: int
+    items: List[RoadmapCandidateItem]
+
+
+class PromotePRDRequest(BaseModel):
+    """Request payload to promote an approved PRD to committed roadmap item(s)."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    prd_id: str = Field(..., alias="prdId", description="Target PRD ObjectId")
+    roadmap_id: Optional[str] = Field(default=None, alias="roadmapId", description="Optional target roadmap container")
+    selected_phases: Optional[List[int]] = Field(
+        default=None,
+        alias="selectedPhases",
+        description="Optional recommendation indices to promote. If None, promotes all phases.",
+    )
+    target_milestone: Optional[str] = Field(default=None, alias="targetMilestone", description="Target milestone override")
+    start_date: Optional[str] = Field(default=None, alias="startDate", pattern=r"^\d{4}-\d{2}-\d{2}$")
+    target_date: Optional[str] = Field(default=None, alias="targetDate", pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class PromotePRDResponse(BaseModel):
+    """Response payload detailing promoted roadmap items."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    success: bool
+    promoted_count: int = Field(alias="promotedCount")
+    created_item_ids: List[str] = Field(default_factory=list, alias="createdItemIds")
+    existing_item_ids: List[str] = Field(default_factory=list, alias="existingItemIds")
+    roadmap_id: str = Field(alias="roadmapId")
+    prd_id: str = Field(alias="prdId")
+    prd_title: str = Field(alias="prdTitle")
+    message: str
+

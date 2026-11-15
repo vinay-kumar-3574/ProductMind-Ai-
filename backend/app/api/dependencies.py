@@ -401,6 +401,7 @@ def get_roadmap_service(
     membership_repo: WorkspaceMembershipRepository = Depends(get_workspace_membership_repository),
     prd_repo: PRDRepository = Depends(get_prd_repository),
     feature_group_repo: FeatureGroupRepository = Depends(get_feature_group_repository),
+    prioritization_repo: PrioritizationScenarioRepository = Depends(get_prioritization_scenario_repository),
 ):
     from app.services.roadmap_service import RoadmapService
 
@@ -411,6 +412,7 @@ def get_roadmap_service(
         membership_repo=membership_repo,
         prd_repo=prd_repo,
         feature_group_repo=feature_group_repo,
+        prioritization_repo=prioritization_repo,
     )
 
 

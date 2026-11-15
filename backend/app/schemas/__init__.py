@@ -45,6 +45,10 @@ from app.schemas.roadmap import (
     RoadmapItemUpdate,
     RoadmapItemResponse,
     RoadmapItemListResponse,
+    RoadmapCandidateItem,
+    RoadmapCandidateListResponse,
+    PromotePRDRequest,
+    PromotePRDResponse,
 )
 from app.schemas.copilot import (
     CopilotConversationCreate,

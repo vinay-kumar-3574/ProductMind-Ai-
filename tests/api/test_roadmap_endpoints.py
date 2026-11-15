@@ -27,6 +27,9 @@ from app.schemas.roadmap import (
     ProductRoadmapListResponse,
     RoadmapItemResponse,
     RoadmapItemListResponse,
+    RoadmapCandidateItem,
+    RoadmapCandidateListResponse,
+    PromotePRDResponse,
 )
 
 
@@ -329,3 +332,92 @@ def test_delete_roadmap_item_endpoint(client, mock_service):
     resp = client.delete(f"/api/v1/roadmap/items/{item_id}?workspace_id={ws_id}")
     assert resp.status_code == status.HTTP_200_OK
     assert resp.json()["success"] is True
+
+
+# ===========================================================================
+# Candidates and PRD Promotion Endpoints Tests (Phase 6.3)
+# ===========================================================================
+
+def test_get_roadmap_candidates_endpoint(client, mock_service):
+    ws_id = str(ObjectId())
+    mock_service.get_candidates = AsyncMock(
+        return_value=RoadmapCandidateListResponse(
+            total=1,
+            items=[
+                RoadmapCandidateItem(
+                    featureGroupId=str(ObjectId()),
+                    title="Real-time Webhook Streaming",
+                    description="Kafka ingress streaming",
+                    feedbackCount=45,
+                    priorityScore=92.0,
+                    priorityLevel="Urgent",
+                    prdId=str(ObjectId()),
+                    prdTitle="Webhook Streaming PRD",
+                    prdStatus="Approved",
+                    prdVersion="1.0.0",
+                    isApprovedForRoadmap=True,
+                    roadmapRecommendations=[{"phase": "Phase 1", "deliverables": "Core engine"}],
+                    existingRoadmapItemIds=[],
+                    isFullyCommitted=False,
+                )
+            ],
+        )
+    )
+
+    resp = client.get(f"/api/v1/roadmap/candidates?workspace_id={ws_id}")
+    assert resp.status_code == status.HTTP_200_OK
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["items"][0]["title"] == "Real-time Webhook Streaming"
+    assert data["items"][0]["isApprovedForRoadmap"] is True
+    assert data["items"][0]["prdStatus"] == "Approved"
+
+
+def test_promote_approved_prd_endpoint(client, mock_service):
+    ws_id = str(ObjectId())
+    prd_id = str(ObjectId())
+    rm_id = str(ObjectId())
+
+    mock_service.promote_approved_prd = AsyncMock(
+        return_value=PromotePRDResponse(
+            success=True,
+            promotedCount=2,
+            createdItemIds=[str(ObjectId()), str(ObjectId())],
+            existingItemIds=[],
+            roadmapId=rm_id,
+            prdId=prd_id,
+            prdTitle="Zero-Knowledge Audit Trail",
+            message="Successfully committed 2 item(s) from approved PRD.",
+        )
+    )
+
+    payload = {
+        "prdId": prd_id,
+        "roadmapId": rm_id,
+        "targetMilestone": "Q1 Production",
+    }
+    resp = client.post(f"/api/v1/roadmap/promote-prd?workspace_id={ws_id}", json=payload)
+    assert resp.status_code == status.HTTP_201_CREATED
+    data = resp.json()
+    assert data["success"] is True
+    assert data["promotedCount"] == 2
+    assert len(data["createdItemIds"]) == 2
+    assert data["prdTitle"] == "Zero-Knowledge Audit Trail"
+
+
+def test_promote_prd_endpoint_bad_request_when_unapproved(client, mock_service):
+    from fastapi import HTTPException
+    ws_id = str(ObjectId())
+    prd_id = str(ObjectId())
+
+    mock_service.promote_approved_prd = AsyncMock(
+        side_effect=HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PRDs with status 'Approved' are eligible for formal roadmap commitment.",
+        )
+    )
+
+    payload = {"prdId": prd_id}
+    resp = client.post(f"/api/v1/roadmap/promote-prd?workspace_id={ws_id}", json=payload)
+    assert resp.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Only PRDs with status 'Approved' are eligible" in resp.json()["detail"]

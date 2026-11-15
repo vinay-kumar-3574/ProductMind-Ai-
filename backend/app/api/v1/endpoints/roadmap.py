@@ -23,6 +23,10 @@ from app.schemas.roadmap import (
     RoadmapItemUpdate,
     RoadmapItemResponse,
     RoadmapItemListResponse,
+    RoadmapCandidateItem,
+    RoadmapCandidateListResponse,
+    PromotePRDRequest,
+    PromotePRDResponse,
 )
 from app.services.roadmap_service import RoadmapService
 
@@ -99,95 +103,65 @@ async def list_product_roadmaps(
         )
 
 
+# ===========================================================================
+# Feature Prioritization & Approved PRD Candidate / Promotion Endpoints
+# ===========================================================================
+
 @router.get(
-    "/{roadmap_id}",
+    "/candidates",
     status_code=status.HTTP_200_OK,
-    summary="Retrieve Product Roadmap by ID",
-    description="Retrieves an individual ProductRoadmap by its ID within the workspace.",
-    response_model=ProductRoadmapResponse,
+    summary="Get Roadmap Candidates",
+    description="Retrieves feature groups and PRD deliverables eligible for roadmap commitment, calculating approval status and priority scores.",
+    response_model=RoadmapCandidateListResponse,
 )
-async def get_product_roadmap(
-    roadmap_id: str = Path(..., description="Product roadmap ID"),
+async def get_roadmap_candidates(
     workspace_id: str = Query(..., description="Target workspace ID"),
     current_user: User = Depends(get_current_user),
     service: RoadmapService = Depends(get_roadmap_service),
-) -> ProductRoadmapResponse:
-    """Retrieves an individual ProductRoadmap."""
+) -> RoadmapCandidateListResponse:
+    """Retrieves feature groups and PRDs eligible for roadmap commitment."""
     try:
-        return await service.get_roadmap(
+        return await service.get_candidates(
             workspace_id=workspace_id,
-            roadmap_id=roadmap_id,
             user=current_user,
         )
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Error retrieving product roadmap '%s': %s", roadmap_id, exc)
+        logger.exception("Error retrieving roadmap candidates: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error retrieving product roadmap.",
+            detail="Error retrieving roadmap candidates.",
         )
 
 
-@router.put(
-    "/{roadmap_id}",
-    status_code=status.HTTP_200_OK,
-    summary="Update Product Roadmap",
-    description="Updates a ProductRoadmap container with optimistic concurrency protection.",
-    response_model=ProductRoadmapResponse,
+@router.post(
+    "/promote-prd",
+    status_code=status.HTTP_201_CREATED,
+    summary="Promote Approved PRD to Roadmap",
+    description="Commits deliverables from an Approved PRD to the active roadmap container. Strict business rule: non-approved PRDs are rejected.",
+    response_model=PromotePRDResponse,
 )
-async def update_product_roadmap(
-    request: ProductRoadmapUpdate,
-    roadmap_id: str = Path(..., description="Product roadmap ID"),
+async def promote_approved_prd(
+    request: PromotePRDRequest,
     workspace_id: str = Query(..., description="Target workspace ID"),
     current_user: User = Depends(get_current_user),
     service: RoadmapService = Depends(get_roadmap_service),
-) -> ProductRoadmapResponse:
-    """Updates a ProductRoadmap container."""
+) -> PromotePRDResponse:
+    """Promotes an approved PRD into formal roadmap item(s)."""
     try:
-        return await service.update_roadmap(
+        return await service.promote_approved_prd(
             workspace_id=workspace_id,
-            roadmap_id=roadmap_id,
             request=request,
             user=current_user,
         )
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Error updating product roadmap '%s': %s", roadmap_id, exc)
+        logger.exception("Error promoting approved PRD: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error updating product roadmap.",
-        )
-
-
-@router.delete(
-    "/{roadmap_id}",
-    status_code=status.HTTP_200_OK,
-    summary="Archive Product Roadmap",
-    description="Marks a ProductRoadmap container as Archived.",
-    response_model=ProductRoadmapResponse,
-)
-async def archive_product_roadmap(
-    roadmap_id: str = Path(..., description="Product roadmap ID"),
-    workspace_id: str = Query(..., description="Target workspace ID"),
-    current_user: User = Depends(get_current_user),
-    service: RoadmapService = Depends(get_roadmap_service),
-) -> ProductRoadmapResponse:
-    """Archives a ProductRoadmap container."""
-    try:
-        return await service.archive_roadmap(
-            workspace_id=workspace_id,
-            roadmap_id=roadmap_id,
-            user=current_user,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Error archiving product roadmap '%s': %s", roadmap_id, exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error archiving product roadmap.",
+            detail="Error promoting approved PRD to roadmap.",
         )
 
 
@@ -358,4 +332,100 @@ async def delete_roadmap_item(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error deleting roadmap item.",
+        )
+
+
+# ===========================================================================
+# ProductRoadmap by ID Endpoints (Registered after specific static paths)
+# ===========================================================================
+
+@router.get(
+    "/{roadmap_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve Product Roadmap by ID",
+    description="Retrieves an individual ProductRoadmap by its ID within the workspace.",
+    response_model=ProductRoadmapResponse,
+)
+async def get_product_roadmap(
+    roadmap_id: str = Path(..., description="Product roadmap ID"),
+    workspace_id: str = Query(..., description="Target workspace ID"),
+    current_user: User = Depends(get_current_user),
+    service: RoadmapService = Depends(get_roadmap_service),
+) -> ProductRoadmapResponse:
+    """Retrieves an individual ProductRoadmap."""
+    try:
+        return await service.get_roadmap(
+            workspace_id=workspace_id,
+            roadmap_id=roadmap_id,
+            user=current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error retrieving product roadmap '%s': %s", roadmap_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving product roadmap.",
+        )
+
+
+@router.put(
+    "/{roadmap_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Update Product Roadmap",
+    description="Updates a ProductRoadmap container with optimistic concurrency protection.",
+    response_model=ProductRoadmapResponse,
+)
+async def update_product_roadmap(
+    request: ProductRoadmapUpdate,
+    roadmap_id: str = Path(..., description="Product roadmap ID"),
+    workspace_id: str = Query(..., description="Target workspace ID"),
+    current_user: User = Depends(get_current_user),
+    service: RoadmapService = Depends(get_roadmap_service),
+) -> ProductRoadmapResponse:
+    """Updates a ProductRoadmap container."""
+    try:
+        return await service.update_roadmap(
+            workspace_id=workspace_id,
+            roadmap_id=roadmap_id,
+            request=request,
+            user=current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error updating product roadmap '%s': %s", roadmap_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error updating product roadmap.",
+        )
+
+
+@router.delete(
+    "/{roadmap_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Archive Product Roadmap",
+    description="Marks a ProductRoadmap container as Archived.",
+    response_model=ProductRoadmapResponse,
+)
+async def archive_product_roadmap(
+    roadmap_id: str = Path(..., description="Product roadmap ID"),
+    workspace_id: str = Query(..., description="Target workspace ID"),
+    current_user: User = Depends(get_current_user),
+    service: RoadmapService = Depends(get_roadmap_service),
+) -> ProductRoadmapResponse:
+    """Archives a ProductRoadmap container."""
+    try:
+        return await service.archive_roadmap(
+            workspace_id=workspace_id,
+            roadmap_id=roadmap_id,
+            user=current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error archiving product roadmap '%s': %s", roadmap_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error archiving product roadmap.",
         )
