@@ -416,3 +416,28 @@ def get_roadmap_service(
     )
 
 
+def get_product_intelligence_service(
+    feedback_repo: FeedbackRepository = Depends(get_feedback_repository),
+    analytics_rollup_repo: AnalyticsDailyRollupRepository = Depends(get_analytics_rollup_repository),
+    analytics_event_repo: AnalyticsEventRepository = Depends(get_analytics_event_repository),
+    feature_group_repo: FeatureGroupRepository = Depends(get_feature_group_repository),
+    prioritization_scenario_repo: PrioritizationScenarioRepository = Depends(get_prioritization_scenario_repository),
+    roadmap_repo: RoadmapRepository = Depends(get_roadmap_repository),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+    membership_repo: WorkspaceMembershipRepository = Depends(get_workspace_membership_repository),
+):
+    from app.services.product_intelligence_service import ProductIntelligenceService
+
+    return ProductIntelligenceService(
+        feedback_repo=feedback_repo,
+        analytics_rollup_repo=analytics_rollup_repo,
+        analytics_event_repo=analytics_event_repo,
+        feature_group_repo=feature_group_repo,
+        prioritization_scenario_repo=prioritization_scenario_repo,
+        roadmap_repo=roadmap_repo,
+        workspace_repo=workspace_repo,
+        membership_repo=membership_repo,
+    )
+
+
+
