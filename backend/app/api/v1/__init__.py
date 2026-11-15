@@ -18,9 +18,11 @@ from app.api.v1.endpoints import (
     orchestrator_ai,
     copilot,
     roadmap,
+    reports,
 )
 
 api_router = APIRouter()
+
 
 # Health & Status Endpoint
 api_router.include_router(health.router)
@@ -61,3 +63,7 @@ api_router.include_router(copilot.router)
 
 # Product Roadmap & Delivery Planning
 api_router.include_router(roadmap.router)
+
+# Executive Reporting, Intelligence Summaries & Saved Reports
+api_router.include_router(reports.router)
+
