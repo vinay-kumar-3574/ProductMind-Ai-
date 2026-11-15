@@ -969,7 +969,7 @@ class RoadmapService:
                     workspace_id=ws_oid,
                     title="Main Product Roadmap",
                     description="Default workspace product roadmap for committed deliverables.",
-                    roadmap_type=ProductRoadmapType.HYBRID,
+                    roadmap_type=ProductRoadmapType.PRODUCT,
                     time_horizon=RoadmapTimeHorizon.QUARTERLY,
                     status=ProductRoadmapStatus.ACTIVE,
                     is_default=True,

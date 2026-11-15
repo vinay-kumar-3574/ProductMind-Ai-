@@ -37,7 +37,12 @@ class ProductRoadmapRepository(BaseRepository[ProductRoadmap]):
                 name="idx_roadmaps_workspace_default",
             ),
         ]
-        await self.collection.create_indexes(indexes)
+        try:
+            await self.collection.create_indexes(indexes)
+        except Exception as exc:
+            # Code 85: IndexOptionsConflict (index already exists with another name)
+            if getattr(exc, "code", None) != 85:
+                raise
 
     async def create_roadmap(self, roadmap: ProductRoadmap) -> ProductRoadmap:
         return await self.create(roadmap)
@@ -155,7 +160,12 @@ class RoadmapRepository(BaseRepository[RoadmapItem]):
                 name="idx_roadmap_items_ws_fg",
             ),
         ]
-        await self.collection.create_indexes(indexes)
+        try:
+            await self.collection.create_indexes(indexes)
+        except Exception as exc:
+            # Code 85: IndexOptionsConflict (index already exists with another name)
+            if getattr(exc, "code", None) != 85:
+                raise
 
     async def find_by_workspace_and_item(
         self,
