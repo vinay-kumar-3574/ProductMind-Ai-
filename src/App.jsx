@@ -81,7 +81,7 @@ export default function App() {
                 <Route path="/journey" element={<CustomerJourneyPage />} />
                 <Route path="/customer-journey" element={<Navigate to="/journey" replace />} />
 
-                <Route path="/reports" element={<Navigate to="/?report=true" replace />} />
+                <Route path="/reports" element={<ReportsPage />} />
 
                 {/* Activity History & Audit (support both /history and /activity-history) */}
                 <Route path="/history" element={<ActivityHistoryPage />} />

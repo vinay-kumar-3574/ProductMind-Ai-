@@ -14,6 +14,9 @@ from app.core.enums import (
     FeatureStatus,
     PriorityTier,
     PRDStatus,
+    ProductRoadmapType,
+    RoadmapTimeHorizon,
+    ProductRoadmapStatus,
     RoadmapStatus,
     ReleaseStatus,
     ExperimentStatus,
@@ -115,23 +118,53 @@ class PRD(BaseMongoModel):
     reviewed_at: Optional[datetime] = Field(default=None, alias="reviewedAt")
 
 
+class ProductRoadmap(BaseMongoModel):
+    workspace_id: PyObjectId = Field(..., alias="workspaceId")
+    legacy_id: Optional[str] = Field(default=None, alias="legacyId", max_length=120)
+    title: str = Field(..., min_length=3, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    roadmap_type: ProductRoadmapType = Field(default=ProductRoadmapType.PRODUCT, alias="roadmapType")
+    time_horizon: RoadmapTimeHorizon = Field(default=RoadmapTimeHorizon.QUARTERLY, alias="timeHorizon")
+    status: ProductRoadmapStatus = Field(default=ProductRoadmapStatus.ACTIVE)
+    is_default: bool = Field(default=False, alias="isDefault")
+    created_by: Optional[str] = Field(default=None, alias="createdBy")
+    creator_id: Optional[PyObjectId] = Field(default=None, alias="creatorId")
+    version: str = Field(default="1.0.0")
+
+
 class RoadmapItem(BaseMongoModel):
     workspace_id: PyObjectId = Field(..., alias="workspaceId")
+    roadmap_id: Optional[PyObjectId] = Field(default=None, alias="roadmapId")
     feature_id: Optional[PyObjectId] = Field(default=None, alias="featureId")
+    feature_group_id: Optional[PyObjectId] = Field(default=None, alias="featureGroupId")
+    prd_id: Optional[PyObjectId] = Field(default=None, alias="prdId")
+    prioritization_scenario_id: Optional[PyObjectId] = Field(default=None, alias="prioritizationScenarioId")
     release_id: Optional[PyObjectId] = Field(default=None, alias="releaseId")
     legacy_id: Optional[str] = Field(default=None, alias="legacyId", max_length=120)
     title: str = Field(..., min_length=3, max_length=200)
     description: str = Field(default="", max_length=2000)
     status: RoadmapStatus = Field(default=RoadmapStatus.PLANNED)
     priority: FeedbackPriority = Field(default=FeedbackPriority.MEDIUM)
+    priority_score: Optional[float] = Field(default=None, ge=0.0, le=100.0, alias="priorityScore")
+    is_committed: bool = Field(default=False, alias="isCommitted")
     owner: Optional[str] = None
     owner_id: Optional[PyObjectId] = Field(default=None, alias="ownerId")
     start_date: str = Field(..., alias="startDate", pattern=r"^\d{4}-\d{2}-\d{2}$")
     target_date: str = Field(..., alias="targetDate", pattern=r"^\d{4}-\d{2}-\d{2}$")
+    actual_start_date: Optional[str] = Field(default=None, alias="actualStartDate", pattern=r"^\d{4}-\d{2}-\d{2}$")
+    actual_end_date: Optional[str] = Field(default=None, alias="actualEndDate", pattern=r"^\d{4}-\d{2}-\d{2}$")
     milestone: Optional[str] = None
     progress: float = Field(default=0.0, ge=0.0, le=100.0)
     dependencies: List[PyObjectId] = Field(default_factory=list)
     notes: str = Field(default="", max_length=1500)
+    version: str = Field(default="1.0.0")
+
+    @model_validator(mode="after")
+    def validate_actual_dates(self) -> "RoadmapItem":
+        if self.actual_start_date and self.actual_end_date:
+            if self.actual_end_date < self.actual_start_date:
+                raise ValueError("actual_end_date cannot precede actual_start_date")
+        return self
 
 
 class ReleaseChecklistItem(BaseModel):

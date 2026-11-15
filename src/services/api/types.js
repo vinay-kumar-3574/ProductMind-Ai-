@@ -78,6 +78,9 @@ export const API_ENDPOINTS = {
     LIST: '/api/v1/ai/planning/',
     DETAIL: (id) => `/api/v1/ai/planning/${id}`,
     REVIEW: (id) => `/api/v1/ai/planning/${id}/review`,
+    SECTIONS: (id) => `/api/v1/ai/planning/${id}/sections`,
+    REGENERATE_SECTION: (id) => `/api/v1/ai/planning/${id}/regenerate-section`,
+    VALIDATE: (id) => `/api/v1/ai/planning/${id}/validate`,
   },
 
   // AI Orchestrator Pipeline
@@ -105,5 +108,34 @@ export const API_ENDPOINTS = {
     CONVERSATIONS: '/api/v1/copilot/conversations',
     CONVERSATION: (conversationId) => `/api/v1/copilot/conversations/${conversationId}`,
     ARCHIVE: (conversationId) => `/api/v1/copilot/conversations/${conversationId}`,
+  },
+
+  // Roadmap & Execution Planning
+  ROADMAP: {
+    LIST: '/api/v1/roadmap/',
+    CREATE: '/api/v1/roadmap/',
+    DETAIL: (id) => `/api/v1/roadmap/${id}`,
+    UPDATE: (id) => `/api/v1/roadmap/${id}`,
+    ARCHIVE: (id) => `/api/v1/roadmap/${id}`,
+    ITEMS: '/api/v1/roadmap/items',
+    ITEM_CREATE: '/api/v1/roadmap/items',
+    ITEM_DETAIL: (id) => `/api/v1/roadmap/items/${id}`,
+    ITEM_UPDATE: (id) => `/api/v1/roadmap/items/${id}`,
+    ITEM_DELETE: (id) => `/api/v1/roadmap/items/${id}`,
+    CANDIDATES: '/api/v1/roadmap/candidates',
+    PROMOTE_PRD: '/api/v1/roadmap/promote-prd',
+  },
+
+  // Executive Reporting & Intelligence
+  REPORTS: {
+    EXECUTIVE_SUMMARY: '/api/v1/reports/executive-summary',
+    DELIVERY_RISK: '/api/v1/reports/delivery-risk',
+    SAVED_LIST: '/api/v1/reports/saved',
+    SAVED_CREATE: '/api/v1/reports/saved',
+    SAVED_DETAIL: (id) => `/api/v1/reports/saved/${id}`,
+    SAVED_UPDATE: (id) => `/api/v1/reports/saved/${id}`,
+    SAVED_DELETE: (id) => `/api/v1/reports/saved/${id}`,
+    EXPORT: '/api/v1/reports/export',
+    BRIEFING: '/api/v1/reports/executive-briefing',
   },
 }

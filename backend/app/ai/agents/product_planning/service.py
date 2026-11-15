@@ -6,7 +6,7 @@ LLM plan generation, human review lifecycle, and MongoDB PRD persistence.
 
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from bson import ObjectId
 from fastapi import HTTPException, status
 
@@ -23,12 +23,15 @@ from app.ai.agents.product_planning.schemas import (
     infer_expected_direction,
     ProductStrategicContext,
     ReviewPlanRequest,
+    UpdatePRDSectionsRequest,
+    RegenerateSectionRequest,
     UserStory,
     AcceptanceCriterion,
     TechnicalRequirement,
     SuccessMetric,
     RiskItem,
     RoadmapPhase,
+    PRDValidationResult,
 )
 from app.core.enums import PlatformRole, MembershipStatus, PRDStatus
 from app.models.auth import User
@@ -98,6 +101,89 @@ def build_prd_sections(
     )
 
 
+def bump_semver(current_version: Optional[str], bump_type: str = "patch") -> str:
+    """
+    Safely increments a semantic version string.
+    Supported bump_type: 'patch' (1.0.0 -> 1.0.1), 'minor' (1.0.0 -> 1.1.0), 'major' (1.0.0 -> 2.0.0), 'none'.
+    Handles non-standard versions gracefully.
+    """
+    b_type = (bump_type or "patch").lower().strip()
+    if b_type == "none":
+        return current_version or "1.0.0"
+
+    v_str = (current_version or "1.0.0").strip()
+    parts = v_str.split(".")
+    try:
+        major = int(parts[0])
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        patch = int(parts[2].split("-")[0].split("+")[0]) if len(parts) > 2 else 0
+
+        if b_type == "major":
+            return f"{major + 1}.0.0"
+        elif b_type == "minor":
+            return f"{major}.{minor + 1}.0"
+        else:  # default patch
+            return f"{major}.{minor}.{patch + 1}"
+    except (ValueError, IndexError):
+        return f"{v_str}.1"
+
+
+CANONICAL_SECTION_KEYS = {
+    "overview",
+    "problem_statement",
+    "target_users",
+    "customer_pain_points",
+    "proposed_solution",
+    "goals_and_success_metrics",
+    "functional_requirements",
+    "non_functional_requirements",
+    "user_stories",
+    "acceptance_criteria",
+    "dependencies_and_constraints",
+    "risks_and_mitigations",
+    "release_plan",
+}
+
+SECTION_KEY_MAP = {
+    "overview": "overview",
+    "executive_summary": "overview",
+    "executivesummary": "overview",
+    "problem_statement": "problem_statement",
+    "problemstatement": "problem_statement",
+    "target_users": "target_users",
+    "targetusers": "target_users",
+    "customer_pain_points": "customer_pain_points",
+    "customerpainpoints": "customer_pain_points",
+    "proposed_solution": "proposed_solution",
+    "proposedsolution": "proposed_solution",
+    "goals_and_success_metrics": "goals_and_success_metrics",
+    "goalsandsuccessmetrics": "goals_and_success_metrics",
+    "success_metrics": "goals_and_success_metrics",
+    "successmetrics": "goals_and_success_metrics",
+    "functional_requirements": "functional_requirements",
+    "functionalrequirements": "functional_requirements",
+    "non_functional_requirements": "non_functional_requirements",
+    "nonfunctionalrequirements": "non_functional_requirements",
+    "user_stories": "user_stories",
+    "userstories": "user_stories",
+    "acceptance_criteria": "acceptance_criteria",
+    "acceptancecriteria": "acceptance_criteria",
+    "dependencies_and_constraints": "dependencies_and_constraints",
+    "dependenciesandconstraints": "dependencies_and_constraints",
+    "dependencies": "dependencies_and_constraints",
+    "technical_requirements": "dependencies_and_constraints",
+    "technicalrequirements": "dependencies_and_constraints",
+    "risks_and_mitigations": "risks_and_mitigations",
+    "risksandmitigations": "risks_and_mitigations",
+    "risk_analysis": "risks_and_mitigations",
+    "riskanalysis": "risks_and_mitigations",
+    "release_plan": "release_plan",
+    "releaseplan": "release_plan",
+    "roadmap_recommendations": "release_plan",
+    "roadmaprecommendations": "release_plan",
+}
+
+
 class ProductPlanningService:
     """
     Coordinates Product Planning Agent executions with MongoDB repositories,
@@ -153,10 +239,11 @@ class ProductPlanningService:
             return
 
         # Active membership check
-        membership = await self.membership_repo.find_by_workspace_and_user(
-            workspace_id=ws_oid,
-            user_id=user.id,
-        )
+        membership = None
+        if hasattr(self.membership_repo, "find_membership"):
+            membership = await self.membership_repo.find_membership(ws_oid, user.id)
+        elif hasattr(self.membership_repo, "find_by_workspace_and_user"):
+            membership = await self.membership_repo.find_by_workspace_and_user(workspace_id=ws_oid, user_id=user.id)
         if not membership or membership.status != MembershipStatus.ACTIVE:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -910,6 +997,555 @@ class ProductPlanningService:
 
         return self._prd_to_response(updated)
 
+    async def update_sections(
+        self,
+        planning_id: str,
+        request: UpdatePRDSectionsRequest,
+        user: User,
+        workspace_id: Optional[str] = None,
+    ) -> ProductPlanResponse:
+        """
+        Updates individual or multiple PRD sections directly in MongoDB Atlas.
+        - Enforces workspace isolation and role checks.
+        - Validates section keys and rejects unrecognized names.
+        - Maintains consistency between the legacy 13 sections and structured_prd.
+        - Preserves user stories, acceptance criteria, technical specs, and evidence references.
+        - Enforces approved-document overwrite protection.
+        - Supports optimistic concurrency control via expected_version.
+        - Bumps version (patch/minor/major/none) and updates updatedAt.
+        """
+        if not ObjectId.is_valid(planning_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid planning_id format: '{planning_id}'",
+            )
+        if not self.prd_repo:
+            raise HTTPException(status_code=500, detail="PRD repository uninitialized")
+
+        plan = await self.prd_repo.find_by_id(ObjectId(planning_id))
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product plan '{planning_id}' not found",
+            )
+
+        await self.verify_workspace_access(user, plan.workspace_id)
+        if workspace_id and str(plan.workspace_id) != str(workspace_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product plan not found in specified workspace",
+            )
+
+        # 1. Enforce Approved Document Protection
+        if plan.status == PRDStatus.APPROVED and not request.force_approved_overwrite:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot modify an already approved PRD without explicit authorization (force_approved_overwrite=True).",
+            )
+
+        # 2. Enforce Optimistic Concurrency Control
+        if request.expected_version and plan.version != request.expected_version:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Concurrent update conflict: PRD version is '{plan.version}', expected '{request.expected_version}'.",
+            )
+
+        # 3. Validate Section Keys
+        has_updates = (
+            bool(request.sections)
+            or bool(request.structured_prd)
+            or request.user_stories is not None
+            or request.technical_requirements is not None
+            or request.success_metrics is not None
+            or request.risk_analysis is not None
+            or request.roadmap_recommendations is not None
+            or bool(request.title)
+        )
+        if not has_updates:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No section updates provided.",
+            )
+
+        invalid_keys = []
+        for raw_k in request.sections.keys():
+            norm_k = raw_k.lower().replace("-", "_")
+            if norm_k not in SECTION_KEY_MAP and raw_k not in CANONICAL_SECTION_KEYS:
+                invalid_keys.append(raw_k)
+
+        if invalid_keys:
+            allowed_list = sorted(list(CANONICAL_SECTION_KEYS))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid section key(s): {invalid_keys}. Allowed section keys: {allowed_list}",
+            )
+
+        # 4. Prepare Section Update Dict
+        current_sections_dict = plan.sections.model_dump(by_alias=False)
+        current_structured = dict(plan.structured_prd) if plan.structured_prd else {}
+
+        for raw_k, val in request.sections.items():
+            norm_k = raw_k.lower().replace("-", "_")
+            canon_k = SECTION_KEY_MAP.get(norm_k, norm_k)
+            val_str = str(val) if val is not None else ""
+            current_sections_dict[canon_k] = val_str
+
+            # Maintain consistency with structured_prd
+            if current_structured:
+                if canon_k == "overview":
+                    current_structured["executive_summary"] = val_str
+                elif canon_k == "problem_statement":
+                    current_structured["problem_statement"] = val_str
+                elif canon_k == "proposed_solution":
+                    current_structured["proposed_solution"] = val_str
+                elif canon_k == "target_users":
+                    lines = [line.strip().lstrip("-•* ") for line in val_str.split("\n") if line.strip().lstrip("-•* ")]
+                    current_structured["target_users"] = lines if lines else ([val_str] if val_str else [])
+                elif canon_k == "customer_pain_points":
+                    lines = [line.strip().lstrip("-•* ") for line in val_str.split("\n") if line.strip().lstrip("-•* ")]
+                    current_structured["customer_pain_points"] = lines if lines else ([val_str] if val_str else [])
+                elif canon_k == "goals_and_success_metrics":
+                    lines = [line.strip().lstrip("-•* ") for line in val_str.split("\n") if line.strip().lstrip("-•* ")]
+                    current_structured["success_metrics"] = lines if lines else ([val_str] if val_str else [])
+
+        # Merge explicit structured_prd updates if provided
+        if request.structured_prd:
+            current_structured.update(request.structured_prd)
+
+        # Merge structured child arrays if provided (with validation)
+        updated_stories = list(plan.user_stories) if plan.user_stories else []
+        if request.user_stories is not None:
+            updated_stories = []
+            for idx, s in enumerate(request.user_stories):
+                try:
+                    story_obj = UserStory(**s)
+                    updated_stories.append(story_obj.model_dump())
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Invalid UserStory schema at index {idx}: {exc}",
+                    )
+            # Synchronize text user_stories section
+            if updated_stories:
+                current_sections_dict["user_stories"] = "\n\n".join(
+                    f"[{s.get('story_id', 'US')}] {s.get('title', '')}\n{s.get('description', '')}"
+                    for s in updated_stories
+                )
+                current_sections_dict["acceptance_criteria"] = "\n\n".join(
+                    f"{s.get('story_id', 'US')} Acceptance Criteria:\n"
+                    + "\n".join(f"  - [{ac.get('criterion_id', 'AC')}] ({ac.get('scenario_type', 'positive')}) {ac.get('description', '')}"
+                               for ac in s.get("acceptance_criteria", []))
+                    for s in updated_stories
+                    if s.get("acceptance_criteria")
+                )
+
+        updated_tech = list(plan.technical_requirements) if plan.technical_requirements else []
+        if request.technical_requirements is not None:
+            updated_tech = []
+            for idx, t in enumerate(request.technical_requirements):
+                try:
+                    tech_obj = TechnicalRequirement(**t)
+                    updated_tech.append(tech_obj.model_dump())
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Invalid TechnicalRequirement schema at index {idx}: {exc}",
+                    )
+
+        updated_metrics = list(plan.success_metrics) if plan.success_metrics else []
+        if request.success_metrics is not None:
+            updated_metrics = []
+            for idx, m in enumerate(request.success_metrics):
+                try:
+                    metric_obj = SuccessMetric(**m)
+                    updated_metrics.append(metric_obj.model_dump())
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Invalid SuccessMetric schema at index {idx}: {exc}",
+                    )
+
+        updated_risks = list(plan.risk_analysis) if plan.risk_analysis else []
+        if request.risk_analysis is not None:
+            updated_risks = []
+            for idx, r in enumerate(request.risk_analysis):
+                try:
+                    risk_obj = RiskItem(**r)
+                    updated_risks.append(risk_obj.model_dump())
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Invalid RiskItem schema at index {idx}: {exc}",
+                    )
+
+        updated_roadmap = list(plan.roadmap_recommendations) if plan.roadmap_recommendations else []
+        if request.roadmap_recommendations is not None:
+            updated_roadmap = []
+            for idx, rp in enumerate(request.roadmap_recommendations):
+                try:
+                    rp_obj = RoadmapPhase(**rp)
+                    updated_roadmap.append(rp_obj.model_dump())
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Invalid RoadmapPhase schema at index {idx}: {exc}",
+                    )
+
+        # 5. Versioning
+        new_version = bump_semver(plan.version, request.version_bump or "patch")
+
+        # 6. Build Atlas update payload
+        update_data: Dict[str, Any] = {
+            "sections": PRDSections(**current_sections_dict).model_dump(by_alias=True),
+            "version": new_version,
+            "userStories": updated_stories,
+            "technicalRequirements": updated_tech,
+            "successMetrics": updated_metrics,
+            "riskAnalysis": updated_risks,
+            "roadmapRecommendations": updated_roadmap,
+            "updatedAt": datetime.now(timezone.utc),
+        }
+        if request.title:
+            update_data["title"] = request.title
+        if current_structured:
+            update_data["structuredPrd"] = current_structured
+
+        # 7. Persist to Atlas
+        updated_doc = await self.prd_repo.update(
+            entity_id=plan.id,
+            update_data=update_data,
+            workspace_id=plan.workspace_id,
+        )
+        if not updated_doc:
+            raise HTTPException(status_code=500, detail="Failed to persist PRD section updates to MongoDB Atlas")
+
+        return self._prd_to_response(updated_doc)
+
+    async def regenerate_section(
+        self,
+        planning_id: str,
+        request: RegenerateSectionRequest,
+        user: User,
+        workspace_id: Optional[str] = None,
+    ) -> ProductPlanResponse:
+        """
+        Regenerates a single specific PRD section using bounded Groq inference.
+        - Preserves all other unrelated sections.
+        - Strictly maintains zero-fabrication and origin-verification policies.
+        - Persists regenerated section directly to MongoDB Atlas.
+        - Respects approved PRD protection.
+        """
+        if not ObjectId.is_valid(planning_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid planning_id format: '{planning_id}'",
+            )
+        if not self.prd_repo:
+            raise HTTPException(status_code=500, detail="PRD repository uninitialized")
+
+        plan = await self.prd_repo.find_by_id(ObjectId(planning_id))
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product plan '{planning_id}' not found",
+            )
+
+        await self.verify_workspace_access(user, plan.workspace_id)
+        if workspace_id and str(plan.workspace_id) != str(workspace_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product plan not found in specified workspace",
+            )
+
+        # 1. Enforce Approved Document Protection
+        if plan.status == PRDStatus.APPROVED and not request.force_approved_overwrite:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot regenerate a section of an already approved PRD without explicit authorization (force_approved_overwrite=True).",
+            )
+
+        # 2. Validate section key
+        norm_key = request.section_key.lower().replace("-", "_")
+        if norm_key not in SECTION_KEY_MAP and request.section_key not in CANONICAL_SECTION_KEYS:
+            allowed = sorted(list(CANONICAL_SECTION_KEYS))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid section key: '{request.section_key}'. Allowed section keys: {allowed}",
+            )
+        canon_key = SECTION_KEY_MAP.get(norm_key, norm_key)
+
+        # 3. Retrieve grounding context (FeatureGroup, Prioritization)
+        feature_group = None
+        if self.feature_group_repo and plan.feature_group_id:
+            feature_group = await self.feature_group_repo.find_by_id(
+                plan.feature_group_id,
+                workspace_id=plan.workspace_id,
+            )
+
+        prioritization_data = None
+        if self.prioritization_repo and plan.feature_group_id:
+            p_scenario = None
+            if plan.prioritization_scenario_id:
+                p_scenario = await self.prioritization_repo.find_by_id(
+                    plan.prioritization_scenario_id,
+                    workspace_id=plan.workspace_id,
+                )
+            if not p_scenario:
+                p_scenario = await self.prioritization_repo.find_by_workspace_and_feature_group(
+                    workspace_id=plan.workspace_id,
+                    feature_group_id=plan.feature_group_id,
+                )
+            if p_scenario:
+                prioritization_data = {
+                    "final_score": p_scenario.final_score,
+                    "priority_level": p_scenario.priority_level,
+                    "factor_scores": p_scenario.factor_scores,
+                    "explanation": p_scenario.explanation,
+                }
+
+        # Build prompt inputs
+        fg_id_str = str(feature_group.id) if feature_group else str(plan.feature_group_id or plan.id)
+        fg_title = feature_group.title if feature_group else plan.title
+        fg_desc = (feature_group.description or getattr(feature_group, "feature_summary", "") or "") if feature_group else (plan.sections.overview or plan.title)
+        fg_count = feature_group.feedback_count if feature_group else 10
+        fg_cust_count = getattr(feature_group, "unique_customer_count", 5) if feature_group else 5
+        fg_pains = feature_group.pain_points if feature_group else ([plan.sections.customer_pain_points] if plan.sections.customer_pain_points else ["Address user feedback"])
+        fg_evidence = getattr(feature_group, "evidence", []) if feature_group else plan.supporting_evidence
+        fg_themes = getattr(feature_group, "common_themes", []) if feature_group else ["Product Improvement"]
+        fg_urgency = dict(feature_group.urgency_distribution) if feature_group and hasattr(feature_group, "urgency_distribution") and feature_group.urgency_distribution else {}
+        fg_sentiment = {}
+        if feature_group and hasattr(feature_group, "sentiment_distribution") and feature_group.sentiment_distribution:
+            s_d = feature_group.sentiment_distribution
+            fg_sentiment = s_d.model_dump() if hasattr(s_d, "model_dump") else s_d
+
+        strategic_ctx = None
+        if request.custom_instructions:
+            strategic_ctx = ProductStrategicContext(additional_planning_instructions=request.custom_instructions)
+
+        # 4. Execute targeted single-stage generation
+        current_sections_dict = plan.sections.model_dump(by_alias=False)
+        current_structured = dict(plan.structured_prd) if plan.structured_prd else {}
+        updated_stories = list(plan.user_stories) if plan.user_stories else []
+        updated_tech = list(plan.technical_requirements) if plan.technical_requirements else []
+        updated_metrics = list(plan.success_metrics) if plan.success_metrics else []
+        updated_risks = list(plan.risk_analysis) if plan.risk_analysis else []
+        updated_roadmap = list(plan.roadmap_recommendations) if plan.roadmap_recommendations else []
+
+        if canon_key in ("user_stories", "acceptance_criteria"):
+            new_stories = await self.agent.agenerate_user_stories(
+                group_id=fg_id_str,
+                title=fg_title,
+                description=fg_desc,
+                feedback_count=fg_count,
+                unique_customer_count=fg_cust_count,
+                pain_points=fg_pains,
+                evidence=fg_evidence,
+                themes=fg_themes,
+                urgency_dist=fg_urgency,
+                sentiment_dist=fg_sentiment,
+                prioritization_data=prioritization_data,
+                strategic_context=strategic_ctx,
+                max_retries=1,
+            )
+            updated_stories = [s.model_dump() for s in new_stories]
+            current_sections_dict["user_stories"] = "\n\n".join(
+                f"[{s.story_id}] {s.title}\n{s.description}" for s in new_stories
+            )
+            current_sections_dict["acceptance_criteria"] = "\n\n".join(
+                f"{s.story_id} Acceptance Criteria:\n"
+                + "\n".join(f"  - [{ac.criterion_id}] ({ac.scenario_type}) {ac.description}" for ac in s.acceptance_criteria)
+                for s in new_stories
+                if s.acceptance_criteria
+            )
+
+        elif canon_key in ("dependencies_and_constraints", "technical_requirements"):
+            specs = await self.agent.agenerate_technical_specs(
+                group_id=fg_id_str,
+                title=fg_title,
+                description=fg_desc,
+                feedback_count=fg_count,
+                unique_customer_count=fg_cust_count,
+                pain_points=fg_pains,
+                evidence=fg_evidence,
+                themes=fg_themes,
+                urgency_dist=fg_urgency,
+                sentiment_dist=fg_sentiment,
+                prioritization_data=prioritization_data,
+                strategic_context=strategic_ctx,
+                max_retries=1,
+            )
+            updated_tech = [t.model_dump() for t in specs.technical_requirements]
+            dep_lines = [f"- [{t.category}] {t.title}: {t.description}" for t in specs.technical_requirements]
+            current_sections_dict["dependencies_and_constraints"] = "Technical Requirements:\n" + "\n".join(dep_lines)
+
+        elif canon_key in ("goals_and_success_metrics", "success_metrics"):
+            specs = await self.agent.agenerate_technical_specs(
+                group_id=fg_id_str,
+                title=fg_title,
+                description=fg_desc,
+                feedback_count=fg_count,
+                unique_customer_count=fg_cust_count,
+                pain_points=fg_pains,
+                evidence=fg_evidence,
+                themes=fg_themes,
+                urgency_dist=fg_urgency,
+                sentiment_dist=fg_sentiment,
+                prioritization_data=prioritization_data,
+                strategic_context=strategic_ctx,
+                max_retries=1,
+            )
+            updated_metrics = [m.model_dump() for m in specs.success_metrics]
+            current_sections_dict["goals_and_success_metrics"] = "\n".join(
+                f"• {m.metric_name}: {m.description} (Target: {m.suggested_target or 'Pending PM confirmation'}, Baseline: {m.baseline or 'unmeasured'})"
+                for m in specs.success_metrics
+            )
+            if current_structured:
+                current_structured["success_metrics"] = [f"{m.metric_name}: {m.description}" for m in specs.success_metrics]
+
+        elif canon_key in ("risks_and_mitigations", "risk_analysis"):
+            specs = await self.agent.agenerate_technical_specs(
+                group_id=fg_id_str,
+                title=fg_title,
+                description=fg_desc,
+                feedback_count=fg_count,
+                unique_customer_count=fg_cust_count,
+                pain_points=fg_pains,
+                evidence=fg_evidence,
+                themes=fg_themes,
+                urgency_dist=fg_urgency,
+                sentiment_dist=fg_sentiment,
+                prioritization_data=prioritization_data,
+                strategic_context=strategic_ctx,
+                max_retries=1,
+            )
+            updated_risks = [r.model_dump() for r in specs.risk_analysis]
+            current_sections_dict["risks_and_mitigations"] = "\n".join(
+                f"• [{r.category}] {r.description} (Mitigation: {r.mitigation})"
+                for r in specs.risk_analysis
+            )
+
+        elif canon_key in ("release_plan", "roadmap_recommendations"):
+            specs = await self.agent.agenerate_technical_specs(
+                group_id=fg_id_str,
+                title=fg_title,
+                description=fg_desc,
+                feedback_count=fg_count,
+                unique_customer_count=fg_cust_count,
+                pain_points=fg_pains,
+                evidence=fg_evidence,
+                themes=fg_themes,
+                urgency_dist=fg_urgency,
+                sentiment_dist=fg_sentiment,
+                prioritization_data=prioritization_data,
+                strategic_context=strategic_ctx,
+                max_retries=1,
+            )
+            updated_roadmap = [rp.model_dump() for rp in specs.roadmap_recommendations]
+            current_sections_dict["release_plan"] = "\n\n".join(
+                f"{p.phase_name}: {p.objective}\nTasks:\n"
+                + "\n".join(f"  - {t}" for t in p.tasks)
+                + "\nDeliverables:\n"
+                + "\n".join(f"  - {d}" for d in p.deliverables)
+                for p in specs.roadmap_recommendations
+            )
+
+        elif canon_key in ("functional_requirements", "non_functional_requirements"):
+            reqs = await self.agent.agenerate_requirements(
+                group_id=fg_id_str,
+                title=fg_title,
+                description=fg_desc,
+                feedback_count=fg_count,
+                unique_customer_count=fg_cust_count,
+                pain_points=fg_pains,
+                evidence=fg_evidence,
+                themes=fg_themes,
+                urgency_dist=fg_urgency,
+                sentiment_dist=fg_sentiment,
+                prioritization_data=prioritization_data,
+                strategic_context=strategic_ctx,
+                max_retries=1,
+            )
+            if canon_key == "functional_requirements":
+                current_sections_dict["functional_requirements"] = "\n".join(
+                    f"- [{r.requirement_id}] ({r.origin}) {r.title}: {r.description}" + (f' (Ref: "{r.source_reference}")' if r.source_reference else "")
+                    for r in reqs.functional_requirements
+                )
+                if current_structured:
+                    current_structured["functional_requirements"] = [r.model_dump() for r in reqs.functional_requirements]
+            else:
+                current_sections_dict["non_functional_requirements"] = "\n".join(
+                    f"- [{r.requirement_id}] ({r.origin}) {r.title}: {r.description}" + (f' (Threshold: {r.numerical_threshold})' if r.numerical_threshold else " [Requires Confirmation]")
+                    for r in reqs.non_functional_requirements
+                )
+                if current_structured:
+                    current_structured["non_functional_requirements"] = [r.model_dump() for r in reqs.non_functional_requirements]
+
+        else:
+            # Narrative sections (overview, problem_statement, proposed_solution, customer_pain_points, target_users)
+            narrative = await self.agent.agenerate_narrative(
+                group_id=fg_id_str,
+                title=fg_title,
+                description=fg_desc,
+                feedback_count=fg_count,
+                unique_customer_count=fg_cust_count,
+                pain_points=fg_pains,
+                evidence=fg_evidence,
+                themes=fg_themes,
+                urgency_dist=fg_urgency,
+                sentiment_dist=fg_sentiment,
+                prioritization_data=prioritization_data,
+                strategic_context=strategic_ctx,
+                max_retries=1,
+            )
+            if canon_key == "overview":
+                current_sections_dict["overview"] = narrative.executive_summary
+                if current_structured:
+                    current_structured["executive_summary"] = narrative.executive_summary
+            elif canon_key == "problem_statement":
+                current_sections_dict["problem_statement"] = narrative.problem_statement
+                if current_structured:
+                    current_structured["problem_statement"] = narrative.problem_statement
+            elif canon_key == "proposed_solution":
+                current_sections_dict["proposed_solution"] = narrative.proposed_solution
+                if current_structured:
+                    current_structured["proposed_solution"] = narrative.proposed_solution
+            elif canon_key == "target_users":
+                current_sections_dict["target_users"] = "\n".join(f"- {u}" for u in narrative.target_users)
+                if current_structured:
+                    current_structured["target_users"] = narrative.target_users
+            elif canon_key == "customer_pain_points":
+                current_sections_dict["customer_pain_points"] = "\n".join(f"- {p}" for p in narrative.customer_pain_points)
+                if current_structured:
+                    current_structured["customer_pain_points"] = narrative.customer_pain_points
+
+        # 5. Versioning
+        new_version = bump_semver(plan.version, "patch")
+
+        # 6. Build Atlas update payload
+        update_data: Dict[str, Any] = {
+            "sections": PRDSections(**current_sections_dict).model_dump(by_alias=True),
+            "version": new_version,
+            "userStories": updated_stories,
+            "technicalRequirements": updated_tech,
+            "successMetrics": updated_metrics,
+            "riskAnalysis": updated_risks,
+            "roadmapRecommendations": updated_roadmap,
+            "updatedAt": datetime.now(timezone.utc),
+        }
+        if current_structured:
+            update_data["structuredPrd"] = current_structured
+
+        # 7. Persist to Atlas
+        updated_doc = await self.prd_repo.update(
+            entity_id=plan.id,
+            update_data=update_data,
+            workspace_id=plan.workspace_id,
+        )
+        if not updated_doc:
+            raise HTTPException(status_code=500, detail="Failed to persist regenerated section to MongoDB Atlas")
+
+        return self._prd_to_response(updated_doc)
+
     def _prd_to_response(self, prd: PRD) -> ProductPlanResponse:
         """Converts internal PRD MongoDB document to external ProductPlanResponse."""
         prd_model: Optional[ProductRequirementsDocument] = None
@@ -982,6 +1618,83 @@ class ProductPlanningService:
             reviewed_at=prd.reviewed_at,
             created_at=prd.created_at,
             updated_at=prd.updated_at,
+        )
+
+    async def validate_plan(
+        self,
+        planning_id: str,
+        user: User,
+        workspace_id: Optional[str] = None,
+    ) -> PRDValidationResult:
+        """
+        Validates the quality, completeness, traceability, acceptance criteria,
+        metrics, and risks of a stored PRD without mutating or modifying the document in MongoDB Atlas.
+        """
+        if not planning_id or not ObjectId.is_valid(planning_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid planning ID format: '{planning_id}'",
+            )
+        if not self.prd_repo:
+            raise HTTPException(status_code=500, detail="PRD repository uninitialized")
+
+        plan = await self.prd_repo.find_by_id(ObjectId(planning_id))
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product plan '{planning_id}' not found",
+            )
+
+        await self.verify_workspace_access(user, plan.workspace_id)
+        if workspace_id and str(plan.workspace_id) != str(workspace_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product plan '{planning_id}' does not belong to workspace '{workspace_id}'",
+            )
+
+        # Retrieve feature group if available
+        feature_group = None
+        if self.feature_group_repo and plan.feature_group_id:
+            try:
+                feature_group = await self.feature_group_repo.find_by_id(
+                    plan.feature_group_id,
+                    workspace_id=plan.workspace_id,
+                )
+            except Exception as e:
+                logger.warning("Could not pre-fetch feature group '%s': %s", plan.feature_group_id, e)
+
+        # Retrieve valid feedback IDs in this workspace for traceability check
+        workspace_feedback_ids: Set[str] = set()
+        if self.feedback_repo:
+            try:
+                feedbacks = await self.feedback_repo.find_by_workspace(plan.workspace_id, limit=5000)
+                workspace_feedback_ids = {str(getattr(f, "id", "")) for f in feedbacks if getattr(f, "id", None)}
+            except Exception as e:
+                logger.warning("Could not pre-fetch workspace feedback IDs: %s", e)
+
+        # Convert plan model to dict for validation inspection
+        plan_dict = plan.model_dump(by_alias=True)
+        # Also ensure canonical fields are populated
+        plan_dict["sections"] = plan.sections.model_dump() if hasattr(plan.sections, "model_dump") else plan.sections
+        plan_dict["id"] = str(plan.id)
+        plan_dict["title"] = plan.title
+        plan_dict["version"] = plan.version
+        plan_dict["status"] = str(plan.status.value if hasattr(plan.status, "value") else plan.status)
+        plan_dict["user_stories"] = plan.user_stories or []
+        plan_dict["technical_requirements"] = plan.technical_requirements or []
+        plan_dict["success_metrics"] = plan.success_metrics or []
+        plan_dict["risk_analysis"] = plan.risk_analysis or []
+        plan_dict["roadmap_recommendations"] = plan.roadmap_recommendations or []
+        plan_dict["supporting_evidence"] = plan.supporting_evidence or []
+        plan_dict["structured_prd"] = plan.structured_prd
+
+        # Run deterministic validation without modifying database
+        from app.ai.agents.product_planning.validator import validate_product_plan
+        return validate_product_plan(
+            prd_data=plan_dict,
+            feature_group=feature_group,
+            workspace_feedback_ids=workspace_feedback_ids,
+            workspace_id=str(plan.workspace_id),
         )
 
     @classmethod

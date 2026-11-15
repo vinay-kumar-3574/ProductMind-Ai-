@@ -7,7 +7,7 @@ technical requirements, success metrics, risk analysis, and roadmap recommendati
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 
 
 class RequirementOrigin(str, Enum):
@@ -136,7 +136,7 @@ class ProductRequirementsDocument(BaseModel):
     title: str = Field(..., description="Clear, descriptive PRD title")
     executive_summary: str = Field(..., description="High-level overview of the feature and value proposition")
     problem_statement: str = Field(..., description="Precise formulation of customer and business problems solved")
-    background: str = Field(..., description="Origin of request, customer demand context, and historical drivers")
+    background: str = Field(default="", description="Origin of request, customer demand context, and historical drivers")
     customer_pain_points: List[str] = Field(default_factory=list, description="Specific grounded customer pain points")
     target_users: List[str] = Field(default_factory=list, description="Target personas and primary user roles")
     business_objectives: List[str] = Field(default_factory=list, description="Commercial and product goals achieved")
@@ -381,6 +381,22 @@ class RoadmapPhase(BaseModel):
     suggested_sequencing: int = Field(default=1, ge=1, description="Numerical order of execution")
     risks: List[str] = Field(default_factory=list, description="Phase-specific execution risks")
 
+    @field_validator("suggested_sequencing", mode="before")
+    @classmethod
+    def parse_sequencing(cls, v: Any) -> int:
+        if isinstance(v, int):
+            return max(1, v)
+        if isinstance(v, str):
+            import re
+            m = re.search(r"\d+", v)
+            if m:
+                try:
+                    return max(1, int(m.group(0)))
+                except ValueError:
+                    return 1
+            return 1
+        return 1
+
 
 # ---------------------------------------------------------------------------
 # LLM Structured Output Envelopes
@@ -525,6 +541,59 @@ class ReviewPlanRequest(BaseModel):
     review_notes: Optional[str] = Field(default=None, description="Optional feedback or rejection reasoning")
 
 
+class UpdatePRDSectionsRequest(BaseModel):
+    """Request payload to update individual or multiple PRD sections with Atlas persistence."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    sections: Dict[str, Any] = Field(
+        ...,
+        description="Dictionary mapping section names to revised content. Accepts camelCase or snake_case 13-section keys."
+    )
+    title: Optional[str] = Field(default=None, description="Optional revised PRD title")
+    structured_prd: Optional[Dict[str, Any]] = Field(default=None, alias="structuredPrd", description="Optional structured PRD updates")
+    user_stories: Optional[List[Dict[str, Any]]] = Field(default=None, alias="userStories", description="Optional updated user stories")
+    technical_requirements: Optional[List[Dict[str, Any]]] = Field(default=None, alias="technicalRequirements")
+    success_metrics: Optional[List[Dict[str, Any]]] = Field(default=None, alias="successMetrics")
+    risk_analysis: Optional[List[Dict[str, Any]]] = Field(default=None, alias="riskAnalysis")
+    roadmap_recommendations: Optional[List[Dict[str, Any]]] = Field(default=None, alias="roadmapRecommendations")
+    force_approved_overwrite: bool = Field(
+        default=False,
+        alias="forceApprovedOverwrite",
+        description="Authorization required to modify an approved PRD."
+    )
+    version_bump: Optional[str] = Field(
+        default="patch",
+        alias="versionBump",
+        description="Versioning increment strategy: 'patch' (e.g. 1.0.0 -> 1.0.1), 'minor' (1.1.0), 'major' (2.0.0), or 'none'"
+    )
+    expected_version: Optional[str] = Field(
+        default=None,
+        alias="expectedVersion",
+        description="Optional optimistic concurrency control check matching current document version"
+    )
+
+
+class RegenerateSectionRequest(BaseModel):
+    """Request payload to regenerate a specific PRD section using LLM inference."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    section_key: str = Field(
+        ...,
+        alias="sectionKey",
+        description="Section identifier to regenerate (e.g. 'user_stories', 'acceptance_criteria', 'functional_requirements', 'non_functional_requirements', 'overview', 'problem_statement', 'goals_and_success_metrics', 'risks_and_mitigations', 'release_plan', etc.)"
+    )
+    custom_instructions: Optional[str] = Field(
+        default=None,
+        alias="customInstructions",
+        description="Optional custom PM directive or constraint for this specific regeneration"
+    )
+    force_approved_overwrite: bool = Field(
+        default=False,
+        alias="forceApprovedOverwrite",
+        description="Authorization required to regenerate a section on an approved PRD."
+    )
+
+
 class ProductPlanResponse(BaseModel):
     """Full API response for a persisted Product Planning record."""
     model_config = ConfigDict(extra="ignore")
@@ -549,3 +618,68 @@ class ProductPlanResponse(BaseModel):
     reviewed_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class ValidationSeverity(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ValidationCategory(str, Enum):
+    COMPLETENESS = "completeness"
+    REQUIREMENT_QUALITY = "requirement_quality"
+    EVIDENCE_TRACEABILITY = "evidence_traceability"
+    ACCEPTANCE_CRITERIA = "acceptance_criteria"
+    SUCCESS_METRICS = "success_metrics"
+    RISKS_AND_MITIGATIONS = "risks_and_mitigations"
+
+
+class ValidationIssue(BaseModel):
+    """Structured quality or compliance defect identified in a PRD."""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(..., description="Unique issue identifier (e.g. 'ISSUE-001')")
+    category: ValidationCategory = Field(..., description="Validation category domain")
+    severity: ValidationSeverity = Field(..., description="Issue severity: critical, high, medium, low")
+    section_key: str = Field(..., description="PRD section key affected (e.g. 'functional_requirements', 'user_stories')")
+    title: str = Field(..., description="Concise issue headline")
+    message: str = Field(..., description="Detailed diagnostic description of the defect")
+    suggestion: Optional[str] = Field(default=None, description="Actionable recommendation for PM or author")
+    related_id: Optional[str] = Field(default=None, description="Associated requirement, story, or criterion ID if applicable")
+
+
+class ValidationSummary(BaseModel):
+    """Aggregated validation statistics, quality score, and review readiness assessment."""
+    model_config = ConfigDict(extra="ignore")
+
+    total_checks: int = Field(default=0, ge=0)
+    passed_checks: int = Field(default=0, ge=0)
+    failed_checks: int = Field(default=0, ge=0)
+    warnings: int = Field(default=0, ge=0)
+    critical_issues: int = Field(default=0, ge=0)
+    high_severity_issues: int = Field(default=0, ge=0)
+    medium_severity_issues: int = Field(default=0, ge=0)
+    low_severity_issues: int = Field(default=0, ge=0)
+    quality_score: int = Field(default=100, ge=0, le=100, description="Deterministic quality score [0..100]")
+    quality_score_calculation: str = Field(default="", description="Transparent deduction formula explanation")
+    is_valid_for_review: bool = Field(default=True, description="True if 0 critical issues exist")
+    has_blocking_issues: bool = Field(default=False, description="True if critical > 0 or high > 0")
+
+
+class PRDValidationResult(BaseModel):
+    """Complete validation report for a Product Requirements Document."""
+    model_config = ConfigDict(extra="ignore")
+
+    planning_id: str = Field(..., description="PRD document ObjectId")
+    title: str = Field(..., description="PRD title")
+    version: str = Field(default="1.0.0")
+    status: str = Field(..., description="Current PRD review status")
+    summary: ValidationSummary = Field(..., description="Aggregated validation scorecard")
+    issues: List[ValidationIssue] = Field(default_factory=list, description="List of identified issues and suggestions")
+    section_status: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Section health mapping: 'valid', 'warning', or 'error'"
+    )
+    validated_at: datetime = Field(default_factory=lambda: datetime.now())

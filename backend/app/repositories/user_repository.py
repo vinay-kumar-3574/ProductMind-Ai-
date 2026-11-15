@@ -51,6 +51,8 @@ class WorkspaceMembershipRepository(BaseRepository[WorkspaceMembership]):
         u_oid = self._ensure_object_id(user_id)
         return await self.find_one({"workspaceId": ws_oid, "userId": u_oid})
 
+    find_by_workspace_and_user = find_membership
+
     async def find_user_memberships(self, user_id: Any) -> List[WorkspaceMembership]:
         u_oid = self._ensure_object_id(user_id)
         cursor = self.collection.find(

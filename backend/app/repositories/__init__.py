@@ -24,7 +24,10 @@ from app.repositories.analytics_repository import (
     AnalyticsBatchRepository,
 )
 from app.repositories.prd_repository import PRDRepository
-from app.repositories.roadmap_repository import RoadmapRepository
+from app.repositories.roadmap_repository import (
+    RoadmapRepository,
+    ProductRoadmapRepository,
+)
 from app.repositories.release_repository import ReleaseRepository
 from app.repositories.copilot_repository import (
     CopilotConversationRepository,
@@ -56,6 +59,7 @@ __all__ = [
     "AnalyticsEventRepository",
     "AnalyticsBatchRepository",
     "PRDRepository",
+    "ProductRoadmapRepository",
     "RoadmapRepository",
     "ReleaseRepository",
     "CopilotConversationRepository",

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useWorkspace } from '../context/WorkspaceContext'
 import {
   Sparkles,
   RefreshCw,
@@ -9,52 +10,132 @@ import {
   TrendingUp,
   ShieldAlert,
   ArrowRight,
-  ExternalLink,
   Filter,
-  Check,
+  Brain,
+  FileText,
+  Lightbulb,
+  Clock,
+  Layers,
 } from 'lucide-react'
 import { Card, Badge, Button } from '../components/common'
-import { synthesizeInsights } from '../services/aiSimulationService'
+import { reportingService } from '../services/api/reportingService'
 
 export function InsightsPage() {
   const navigate = useNavigate()
   const { feedback, features, addToast } = useApp()
+  const { currentWorkspace } = useWorkspace()
 
-  const [analyzing, setAnalyzing] = useState(false)
-  const [analysisStep, setAnalysisStep] = useState(0)
+  const [isLoadingIntelligence, setIsLoadingIntelligence] = useState(false)
+  const [executiveSummary, setExecutiveSummary] = useState(null)
+
+  // AI Briefing State
+  const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false)
+  const [executiveBriefing, setExecutiveBriefing] = useState(null)
+  const [briefingError, setBriefingError] = useState(null)
   const [severityFilter, setSeverityFilter] = useState('All')
-  const [insights, setInsights] = useState(() => synthesizeInsights(feedback, features))
 
-  const analysisSteps = [
-    'Scanning customer feedback corpus...',
-    'Extracting sentiment clusters & frequency vectors...',
-    'Correlating customer pain points with backlog features...',
-    'Synthesizing product opportunities & release blockers...',
-  ]
-
-  const handleRunAnalysis = () => {
-    setAnalyzing(true)
-    setAnalysisStep(0)
-
-    const stepInterval = setInterval(() => {
-      setAnalysisStep(prev => {
-        if (prev < analysisSteps.length - 1) {
-          return prev + 1
-        }
-        clearInterval(stepInterval)
-        setTimeout(() => {
-          setInsights(synthesizeInsights(feedback, features))
-          setAnalyzing(false)
-          addToast('AI Insights updated from current feedback corpus', 'success')
-        }, 500)
-        return prev
+  // Load Executive Summary on mount or workspace change
+  const loadIntelligence = async () => {
+    if (!currentWorkspace?.id) return
+    setIsLoadingIntelligence(true)
+    try {
+      const summary = await reportingService.getExecutiveSummary({
+        workspaceId: currentWorkspace.id,
+        timeRange: '30d',
       })
-    }, 450)
+      setExecutiveSummary(summary)
+    } catch (err) {
+      console.warn('Failed to fetch product intelligence:', err)
+    } finally {
+      setIsLoadingIntelligence(false)
+    }
   }
 
-  const filteredInsights = severityFilter === 'All'
-    ? insights
-    : insights.filter(ins => ins.severity === severityFilter.toLowerCase())
+  useEffect(() => {
+    loadIntelligence()
+  }, [currentWorkspace?.id])
+
+  // Trigger Live LLM Executive Briefing
+  const handleGenerateBriefing = async () => {
+    if (!currentWorkspace?.id) return
+    setIsGeneratingBriefing(true)
+    setBriefingError(null)
+
+    try {
+      const briefing = await reportingService.generateExecutiveBriefing({
+        workspaceId: currentWorkspace.id,
+        timeRange: '30d',
+      })
+      setExecutiveBriefing(briefing)
+      addToast('Executive Product Briefing generated successfully', 'success')
+    } catch (err) {
+      const msg = err.message || 'Failed to generate executive briefing'
+      setBriefingError(msg)
+      addToast(msg, 'error')
+    } finally {
+      setIsGeneratingBriefing(false)
+    }
+  }
+
+  // Aggregate cross-domain observations from live summary
+  const observations = React.useMemo(() => {
+    const list = []
+
+    // 1. Feature opportunities
+    if (executiveSummary?.featureOpportunities) {
+      executiveSummary.featureOpportunities.forEach((opp, idx) => {
+        list.push({
+          id: `opp-${idx}`,
+          title: `Opportunity: ${opp.category}`,
+          category: opp.category,
+          severity: opp.opportunityScore > 75 ? 'critical' : opp.opportunityScore > 50 ? 'high' : 'medium',
+          summary: opp.recommendation,
+          recommendation: `Align upcoming sprint backlog to address ${opp.category} demand. Priority score: ${opp.opportunityScore?.toFixed(0)}`,
+          score: opp.opportunityScore,
+          type: 'opportunity',
+          evidenceCount: opp.evidenceFeedbackIds?.length || 0,
+        })
+      })
+    }
+
+    // 2. Customer Pain Points
+    if (executiveSummary?.customerSentiment?.topCustomerPainPoints) {
+      executiveSummary.customerSentiment.topCustomerPainPoints.forEach((pain, idx) => {
+        list.push({
+          id: `pain-${idx}`,
+          title: `Pain Point: ${pain.category}`,
+          category: pain.category,
+          severity: pain.sentimentRatio < 0.3 ? 'critical' : 'high',
+          summary: `${pain.negativeCount} negative feedback items recorded. Primary cluster: ${pain.category}.`,
+          recommendation: `Investigate root cause in ${pain.category}. Review related tickets and prioritize remediations.`,
+          type: 'pain_point',
+          evidenceCount: pain.negativeCount,
+        })
+      })
+    }
+
+    // 3. Delivery Risks
+    if (executiveSummary?.deliveryRisk?.itemsAtRisk) {
+      executiveSummary.deliveryRisk.itemsAtRisk.forEach((riskItem, idx) => {
+        list.push({
+          id: `risk-${idx}`,
+          title: `Delivery Risk: ${riskItem.itemTitle}`,
+          category: 'Delivery',
+          severity: riskItem.riskLevel === 'high' ? 'critical' : riskItem.riskLevel === 'medium' ? 'high' : 'medium',
+          summary: riskItem.reason || `Risk detected for roadmap item ${riskItem.itemTitle}`,
+          recommendation: `Unblock dependencies and reassign engineering resources. Item status: ${riskItem.status}.`,
+          type: 'risk',
+          evidenceCount: 1,
+        })
+      })
+    }
+
+    return list
+  }, [executiveSummary])
+
+  const filteredObservations = severityFilter === 'All'
+    ? observations
+    : observations.filter(obs => obs.severity === severityFilter.toLowerCase())
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -62,53 +143,158 @@ export function InsightsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">AI Insights Workspace</h2>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20">
-              Simulated Intelligence
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Product Intelligence & Strategic Insights</h2>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              Atlas Grounded
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Deterministic NLP pattern recognition, pain point clustering, and strategic product recommendations
+            Cross-domain intelligence synthesis: Customer sentiment, feature adoption, delivery risks, and AI briefings
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Analyze / Refresh Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isLoadingIntelligence}
+            onClick={loadIntelligence}
+            icon={RefreshCw}
+            className={isLoadingIntelligence ? 'animate-spin' : ''}
+          >
+            Refresh Data
+          </Button>
           <Button
             variant="electric"
             size="sm"
-            disabled={analyzing}
-            onClick={handleRunAnalysis}
-            icon={analyzing ? RefreshCw : Sparkles}
-            className={analyzing ? 'animate-pulse' : ''}
+            disabled={isGeneratingBriefing}
+            onClick={handleGenerateBriefing}
+            icon={isGeneratingBriefing ? RefreshCw : Sparkles}
+            className={isGeneratingBriefing ? 'animate-pulse' : ''}
           >
-            {analyzing ? 'Analyzing Corpus...' : 'Analyze Feedback'}
+            {isGeneratingBriefing ? 'Generating AI Briefing...' : 'Generate AI Briefing'}
           </Button>
         </div>
       </div>
 
-      {/* Animated Analysis Progress Banner */}
-      {analyzing && (
+      {/* AI Executive Briefing Card (if available or loading) */}
+      {isGeneratingBriefing && (
         <Card className="p-5 border-brand-500/40 glow-border-brand animate-fadeIn">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-xl bg-brand-600 flex items-center justify-center text-white shrink-0 animate-spin">
-              <RefreshCw className="w-4 h-4" />
+              <Sparkles className="w-4 h-4" />
             </div>
-            <div className="flex-1">
+            <div>
               <span className="text-xs font-bold text-brand-600 dark:text-brand-400">
-                Phase {analysisStep + 1} of {analysisSteps.length}
+                Synthesizing Executive Product Briefing...
               </span>
-              <p className="text-sm font-semibold text-slate-900 dark:text-white mt-0.5">
-                {analysisSteps[analysisStep]}
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Aggregating customer signals, backlog priorities, roadmap milestones, and telemetry from Atlas
               </p>
             </div>
           </div>
-          <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 mt-4 overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-brand-500 to-electric-500 transition-all duration-300"
-              style={{ width: `${((analysisStep + 1) / analysisSteps.length) * 100}%` }}
-            />
+        </Card>
+      )}
+
+      {briefingError && (
+        <Card className="p-4 border-rose-500/40 bg-rose-50/10 dark:bg-rose-950/10 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0" />
+          <div className="flex-1">
+            <span className="text-xs font-bold text-rose-600 dark:text-rose-400">Briefing Generation Notice</span>
+            <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">{briefingError}</p>
           </div>
+        </Card>
+      )}
+
+      {executiveBriefing && (
+        <Card className="p-6 border-brand-500/50 bg-gradient-to-br from-brand-500/5 via-electric-500/5 to-transparent">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-electric-600 flex items-center justify-center text-white shadow-md">
+                <Brain className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Executive Product Briefing
+                </h3>
+                <span className="text-[10px] text-slate-400">
+                  Model: {executiveBriefing.modelUsed || 'qwen/qwen3.8-27b'} • Generated {new Date().toLocaleTimeString()}
+                </span>
+              </div>
+            </div>
+            <Badge variant="brand" size="sm">
+              Strategic Briefing
+            </Badge>
+          </div>
+
+          {/* Executive Summary Narrative */}
+          <div className="p-4 rounded-xl bg-white dark:bg-navy-900 border border-slate-200 dark:border-slate-800 mb-4">
+            <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
+              Executive Overview
+            </h4>
+            <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">
+              {executiveBriefing.executiveSummary || executiveBriefing.summary || 'Summary unavailable.'}
+            </p>
+          </div>
+
+          {/* Strategic Recommendations */}
+          {executiveBriefing.strategicRecommendations?.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                Strategic Recommendations
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {executiveBriefing.strategicRecommendations.map((rec, i) => (
+                  <div key={i} className="p-3 rounded-lg bg-white dark:bg-navy-900 border border-slate-200 dark:border-slate-800 text-xs">
+                    <span className="font-bold text-slate-900 dark:text-white block mb-1">
+                      {i + 1}. {rec.recommendation || rec.title || rec}
+                    </span>
+                    {rec.rationale && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        <strong>Rationale:</strong> {rec.rationale}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Delivery & Operational Risks */}
+          {executiveBriefing.deliveryRisks?.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
+                Key Delivery Risks
+              </h4>
+              <div className="space-y-2">
+                {executiveBriefing.deliveryRisks.map((risk, i) => (
+                  <div key={i} className="p-2.5 rounded-lg bg-rose-50/20 dark:bg-rose-950/20 border border-rose-500/20 text-xs flex items-start gap-2">
+                    <ShieldAlert className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold text-rose-700 dark:text-rose-300">
+                        {risk.itemTitle || risk.risk || risk}
+                      </span>
+                      {risk.mitigation && (
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+                          <strong>Mitigation:</strong> {risk.mitigation}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Evidence Citations */}
+          {executiveBriefing.evidenceCitations?.length > 0 && (
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-500">
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Grounding Citations: </span>
+              {executiveBriefing.evidenceCitations.join(' • ')}
+            </div>
+          )}
         </Card>
       )}
 
@@ -119,7 +305,7 @@ export function InsightsPage() {
             <Filter className="w-3.5 h-3.5" />
             <span>Severity:</span>
           </span>
-          {['All', 'Critical', 'High', 'Medium', 'Info'].map(sev => (
+          {['All', 'Critical', 'High', 'Medium'].map(sev => (
             <button
               key={sev}
               onClick={() => setSeverityFilter(sev)}
@@ -135,107 +321,93 @@ export function InsightsPage() {
         </div>
 
         <span className="text-xs text-slate-400">
-          Showing <strong>{filteredInsights.length}</strong> active observations
+          Showing <strong>{filteredObservations.length}</strong> active intelligence signals
         </span>
       </div>
 
-      {/* Insights Grid */}
+      {/* Observations Grid */}
       <div className="space-y-4">
-        {filteredInsights.map(insight => {
-          const isCritical = insight.severity === 'critical'
-          const isHigh = insight.severity === 'high'
-          const matchingFeedback = feedback.filter(f => insight.supportingFeedbackIds?.includes(f.id))
-          const associatedFeat = features.find(f => f.id === insight.associatedFeatureId)
+        {filteredObservations.length === 0 ? (
+          <Card className="p-8 text-center border-dashed border-slate-200 dark:border-slate-800">
+            <Sparkles className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">No signals match current filter</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Select another severity tier or ingest additional customer feedback and roadmap milestones.
+            </p>
+          </Card>
+        ) : (
+          filteredObservations.map(item => {
+            const isCritical = item.severity === 'critical'
+            const isHigh = item.severity === 'high'
 
-          return (
-            <Card
-              key={insight.id}
-              className={`p-5 transition-all ${
-                isCritical
-                  ? 'border-rose-500/40 bg-rose-50/10 dark:bg-rose-950/10'
-                  : isHigh
-                  ? 'border-amber-500/40 bg-amber-50/10 dark:bg-amber-950/10'
-                  : 'border-slate-200 dark:border-slate-800'
-              }`}
-              hover
-            >
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-2">
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                      isCritical
-                        ? 'bg-rose-500/20 text-rose-500'
-                        : isHigh
-                        ? 'bg-amber-500/20 text-amber-500'
-                        : 'bg-brand-500/20 text-brand-500'
-                    }`}
-                  >
-                    {isCritical ? <ShieldAlert className="w-4 h-4" /> : isHigh ? <AlertTriangle className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
-                  </span>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">{insight.title}</h3>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] font-semibold text-slate-400">Category: {insight.category}</span>
-                      <span>•</span>
-                      <span className="text-[10px] font-semibold text-slate-400">{insight.evidenceCount} Feedback Signals</span>
+            return (
+              <Card
+                key={item.id}
+                className={`p-5 transition-all ${
+                  isCritical
+                    ? 'border-rose-500/40 bg-rose-50/10 dark:bg-rose-950/10'
+                    : isHigh
+                    ? 'border-amber-500/40 bg-amber-50/10 dark:bg-amber-950/10'
+                    : 'border-slate-200 dark:border-slate-800'
+                }`}
+                hover
+              >
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-2">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                        isCritical
+                          ? 'bg-rose-500/20 text-rose-500'
+                          : isHigh
+                          ? 'bg-amber-500/20 text-amber-500'
+                          : 'bg-brand-500/20 text-brand-500'
+                      }`}
+                    >
+                      {isCritical ? (
+                        <ShieldAlert className="w-4 h-4" />
+                      ) : isHigh ? (
+                        <AlertTriangle className="w-4 h-4" />
+                      ) : (
+                        <Sparkles className="w-4 h-4" />
+                      )}
+                    </span>
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">{item.title}</h3>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] font-semibold text-slate-400">Category: {item.category}</span>
+                        {item.evidenceCount > 0 && (
+                          <>
+                            <span>•</span>
+                            <span className="text-[10px] font-semibold text-slate-400">{item.evidenceCount} Signals</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <Badge
-                  variant={isCritical ? 'danger' : isHigh ? 'warning' : 'brand'}
-                  size="sm"
-                >
-                  {insight.severity.toUpperCase()}
-                </Badge>
-              </div>
-
-              {/* Summary paragraph */}
-              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-3">
-                {insight.summary}
-              </p>
-
-              {/* Action Recommendation Box */}
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-navy-950/80 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-2.5 mb-3">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                <div className="text-xs">
-                  <span className="font-bold text-slate-900 dark:text-white">Recommended Action: </span>
-                  <span className="text-slate-600 dark:text-slate-300">{insight.recommendation}</span>
-                </div>
-              </div>
-
-              {/* Associated Feature link */}
-              {associatedFeat && (
-                <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <span className="text-slate-400">Associated Roadmap Feature:</span>
-                  <button
-                    onClick={() => navigate('/prioritization')}
-                    className="font-bold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1"
+                  <Badge
+                    variant={isCritical ? 'danger' : isHigh ? 'warning' : 'brand'}
+                    size="sm"
                   >
-                    <span>{associatedFeat.name} (Score: {associatedFeat.score.toFixed(2)})</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                    {item.severity.toUpperCase()}
+                  </Badge>
                 </div>
-              )}
 
-              {/* Supporting evidence collapsibles */}
-              {matchingFeedback.length > 0 && (
-                <div className="mt-3 pt-2 border-t border-slate-100 dark:border-slate-800/80">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
-                    Supporting Customer Quotes ({matchingFeedback.length}):
-                  </span>
-                  <div className="space-y-1.5">
-                    {matchingFeedback.map(fb => (
-                      <div key={fb.id} className="p-2 rounded-lg bg-white dark:bg-navy-900 border border-slate-200/60 dark:border-slate-800/60 text-[11px] text-slate-500 dark:text-slate-400">
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">"{fb.title}"</span> — {fb.customer} ({fb.company})
-                      </div>
-                    ))}
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-3">
+                  {item.summary}
+                </p>
+
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-navy-950/80 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <span className="font-bold text-slate-900 dark:text-white">Recommended Action: </span>
+                    <span className="text-slate-600 dark:text-slate-300">{item.recommendation}</span>
                   </div>
                 </div>
-              )}
-            </Card>
-          )
-        })}
+              </Card>
+            )
+          })
+        )}
       </div>
     </div>
   )
