@@ -33,6 +33,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.mongo_client = MongoDBManager._async_client
         app.state.mongo_db = db
         logger.info("Connected to MongoDB Atlas successfully. Target database: [%s]", db.name)
+
+        # Recover any interrupted AI processing tasks across restarts
+        try:
+            from app.services.feedback_ai_background import FeedbackAIBackgroundWorker
+            await FeedbackAIBackgroundWorker.get_instance().recover_and_resume(db)
+        except Exception as bg_exc:
+            logger.warning("Failed to recover background AI tasks on startup: %s", bg_exc)
     except Exception as exc:
         logger.error("CRITICAL: Failed to connect to MongoDB Atlas during startup (no fallback enabled): %s", exc)
         app.state.mongo_client = None

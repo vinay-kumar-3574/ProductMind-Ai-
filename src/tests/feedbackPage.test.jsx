@@ -258,4 +258,49 @@ describe('Module 2 — Customer Feedback and Support Ticket Ingestion', () => {
       expect(onErrorMock).toHaveBeenCalledWith(rateLimitError, true)
     })
   })
+
+  describe('CSV Batch Automatic AI Background Processing & Monitoring', () => {
+    it('retrieves batch status and AI counts via getBatchStatus', async () => {
+      apiClient.get.mockResolvedValueOnce({
+        data: {
+          batch_id: 'batch-test-123',
+          workspace_id: '660011223344556677889902',
+          total_rows: 25,
+          accepted_rows: 25,
+          rejected_rows: 0,
+          duplicate_rows: 0,
+          ai_completed_rows: 15,
+          ai_queued_rows: 10,
+          ai_rate_limited_rows: 0,
+          ai_failed_rows: 0,
+        },
+      })
+
+      const status = await feedbackService.getBatchStatus('batch-test-123', '660011223344556677889902')
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        '/api/v1/feedback/batch/batch-test-123?workspaceId=660011223344556677889902'
+      )
+      expect(status.batchId).toBe('batch-test-123')
+      expect(status.aiCompletedRows).toBe(15)
+      expect(status.aiQueuedRows).toBe(10)
+    })
+
+    it('triggers retry of failed/rate-limited items via retryBatchAi', async () => {
+      apiClient.post.mockResolvedValueOnce({
+        data: {
+          batch_id: 'batch-test-123',
+          requeued_rows: 3,
+          message: 'Re-queued 3 failed/rate-limited items for AI analysis',
+        },
+      })
+
+      const retryRes = await feedbackService.retryBatchAi('batch-test-123', '660011223344556677889902')
+
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/feedback/batch/batch-test-123/retry-failed-ai?workspaceId=660011223344556677889902'
+      )
+      expect(retryRes.requeuedRows).toBe(3)
+    })
+  })
 })

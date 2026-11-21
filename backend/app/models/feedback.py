@@ -70,3 +70,5 @@ class FeedbackItem(BaseMongoModel):
     embedding: Optional[List[float]] = Field(default=None)
     ai_analysis: Optional[Dict[str, Any]] = Field(default=None, alias="aiAnalysis")
     analyzed_at: Optional[datetime] = Field(default=None, alias="analyzedAt")
+    ai_status: Optional[str] = Field(default="awaiting_analysis", alias="aiStatus")
+    ai_error: Optional[str] = Field(default=None, alias="aiError")

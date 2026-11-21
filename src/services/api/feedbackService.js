@@ -200,6 +200,48 @@ export const feedbackService = {
     })
     return response.data
   },
+
+  /**
+   * Get batch ingestion and AI processing status
+   */
+  async getBatchStatus(batchId, workspaceId = null) {
+    const wsId = workspaceId || getActiveWorkspaceId()
+    const response = await apiClient.get(
+      `/api/v1/feedback/batch/${batchId}?workspaceId=${encodeURIComponent(wsId)}`
+    )
+    const data = response.data || {}
+    return {
+      batchId: data.id || data.batch_id || data.batchId || batchId,
+      workspaceId: data.workspaceId || data.workspace_id,
+      status: data.status,
+      totalRows: data.totalRows ?? data.total_rows ?? 0,
+      acceptedRows: data.acceptedRows ?? data.accepted_rows ?? 0,
+      rejectedRows: data.rejectedRows ?? data.rejected_rows ?? 0,
+      duplicateRows: data.duplicateRows ?? data.duplicate_rows ?? 0,
+      aiCompletedRows: data.aiCompletedRows ?? data.ai_completed_rows ?? 0,
+      aiQueuedRows: data.aiQueuedRows ?? data.ai_queued_rows ?? 0,
+      aiRateLimitedRows: data.aiRateLimitedRows ?? data.ai_rate_limited_rows ?? 0,
+      aiFailedRows: data.aiFailedRows ?? data.ai_failed_rows ?? 0,
+      raw: data,
+    }
+  },
+
+  /**
+   * Retry failed or rate-limited AI items in a batch
+   */
+  async retryBatchAi(batchId, workspaceId = null) {
+    const wsId = workspaceId || getActiveWorkspaceId()
+    const response = await apiClient.post(
+      `/api/v1/feedback/batch/${batchId}/retry-failed-ai?workspaceId=${encodeURIComponent(wsId)}`
+    )
+    const data = response.data || {}
+    return {
+      batchId: data.batch_id || data.batchId || batchId,
+      requeuedRows: data.requeued_rows ?? data.requeuedRows ?? 0,
+      message: data.message,
+      raw: data,
+    }
+  },
 }
 
 export default feedbackService

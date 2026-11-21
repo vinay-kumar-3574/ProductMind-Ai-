@@ -203,6 +203,8 @@ class FeedbackRepository(BaseRepository[FeedbackItem]):
                 "metadata": metadata_dict,
             },
             "analyzedAt": now,
+            "aiStatus": "completed",
+            "aiError": None,
             "aiThemes": themes,
             "aiPredictedPriority": mapped_priority,
             "classificationConfidence": analysis_data.get("confidence", 0.8),
@@ -224,6 +226,102 @@ class FeedbackRepository(BaseRepository[FeedbackItem]):
         if not doc:
             return None
         return FeedbackItem.from_mongo(doc)
+
+    async def update_ai_status(
+        self,
+        feedback_id: Any,
+        workspace_id: Any,
+        ai_status: str,
+        ai_error: Optional[str] = None,
+    ) -> Optional[FeedbackItem]:
+        """Atomically updates the persistent AI execution status and error state on a feedback item."""
+        f_oid = self._ensure_object_id(feedback_id)
+        ws_oid = self._ensure_object_id(workspace_id)
+        now = datetime.now(timezone.utc)
+
+        update_fields: Dict[str, Any] = {
+            "aiStatus": ai_status,
+            "updatedAt": now,
+        }
+        if ai_error is not None:
+            update_fields["aiError"] = ai_error
+        elif ai_status in ("completed", "analyzing", "queued"):
+            update_fields["aiError"] = None
+
+        doc = await self.collection.find_one_and_update(
+            {"_id": f_oid, "workspaceId": ws_oid},
+            {"$set": update_fields},
+            return_document=True,
+        )
+        return FeedbackItem.from_mongo(doc) if doc else None
+
+    async def claim_next_queued_item(
+        self,
+        workspace_id: Optional[Any] = None,
+        batch_id: Optional[Any] = None,
+    ) -> Optional[FeedbackItem]:
+        """Atomically claims the oldest queued feedback item for AI processing by transitioning status to 'analyzing'."""
+        query: Dict[str, Any] = {
+            "aiStatus": "queued",
+            "aiAnalysis": None,
+        }
+        if workspace_id:
+            query["workspaceId"] = self._ensure_object_id(workspace_id)
+        if batch_id:
+            query["batchId"] = self._ensure_object_id(batch_id)
+
+        now = datetime.now(timezone.utc)
+        doc = await self.collection.find_one_and_update(
+            query,
+            {"$set": {"aiStatus": "analyzing", "updatedAt": now}},
+            sort=[("_id", 1)],
+            return_document=True,
+        )
+        return FeedbackItem.from_mongo(doc) if doc else None
+
+    async def recover_interrupted_items(self) -> int:
+        """Recovers items stuck in 'analyzing' state (e.g. following a backend restart) by resetting to 'queued'."""
+        now = datetime.now(timezone.utc)
+        result = await self.collection.update_many(
+            {"aiStatus": "analyzing", "aiAnalysis": None},
+            {"$set": {"aiStatus": "queued", "updatedAt": now}},
+        )
+        return result.modified_count
+
+    async def get_batch_ai_summary(self, batch_id: Any, workspace_id: Any) -> Dict[str, int]:
+        """Returns counts of feedback items in a batch partitioned by AI execution status."""
+        b_oid = self._ensure_object_id(batch_id)
+        ws_oid = self._ensure_object_id(workspace_id)
+        pipeline = [
+            {"$match": {"batchId": b_oid, "workspaceId": ws_oid}},
+            {"$group": {"_id": {"$ifNull": ["$aiStatus", "awaiting_analysis"]}, "count": {"$sum": 1}}},
+        ]
+        docs = await self.collection.aggregate(pipeline).to_list(length=20)
+        status_counts = {d["_id"]: d["count"] for d in docs if d.get("_id")}
+        return {
+            "completed": status_counts.get("completed", 0) + status_counts.get("analyzed", 0),
+            "queued": status_counts.get("queued", 0),
+            "analyzing": status_counts.get("analyzing", 0),
+            "rate_limited": status_counts.get("rate_limited", 0),
+            "failed": status_counts.get("failed", 0),
+            "awaiting_analysis": status_counts.get("awaiting_analysis", 0),
+        }
+
+    async def retry_failed_batch_ai(self, batch_id: Any, workspace_id: Any) -> int:
+        """Resets failed or rate-limited items in a batch back to 'queued' for retry."""
+        b_oid = self._ensure_object_id(batch_id)
+        ws_oid = self._ensure_object_id(workspace_id)
+        now = datetime.now(timezone.utc)
+        result = await self.collection.update_many(
+            {
+                "batchId": b_oid,
+                "workspaceId": ws_oid,
+                "aiStatus": {"$in": ["failed", "rate_limited", "awaiting_analysis"]},
+                "aiAnalysis": None,
+            },
+            {"$set": {"aiStatus": "queued", "aiError": None, "updatedAt": now}},
+        )
+        return result.modified_count
 
     async def link_to_feature_group(
         self,

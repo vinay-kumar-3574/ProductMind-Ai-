@@ -28,6 +28,7 @@ import {
   Loader2,
   Brain,
   Quote,
+  RefreshCw,
 } from 'lucide-react'
 import { Card, Badge, Button, Modal, DemoModeBanner, AIClassificationCard } from '../components/common'
 import { parseFeedbackCSV, generateSampleCSV, exportFeedbackToCSV } from '../services/csvService'
@@ -100,12 +101,22 @@ export function FeedbackPage() {
     const rawCreated = item.createdAt || item.created_at
     const rawFeatureId = item.promotedFeatureId || item.promoted_feature_id || item.linked_feature_id || item.linkedFeatureId
     const rawAnalysis = item.aiAnalysis || item.ai_analysis || item.analysis
+    const rawAiStatus = (item.aiStatus || item.ai_status || '').toLowerCase()
+    const rawError = item.aiError || item.ai_error || null
     const id = String(item.id || item._id)
     const queuedStatus = feedbackAiQueue.getStatus(id)
 
     let aiStatus = AI_STATUS.AWAITING_ANALYSIS
-    if (rawAnalysis) {
+    if (rawAnalysis || rawAiStatus === 'completed' || rawAiStatus === 'analyzed') {
       aiStatus = AI_STATUS.COMPLETED
+    } else if (rawAiStatus === 'analyzing') {
+      aiStatus = AI_STATUS.ANALYZING
+    } else if (rawAiStatus === 'queued') {
+      aiStatus = AI_STATUS.QUEUED
+    } else if (rawAiStatus === 'rate_limited') {
+      aiStatus = AI_STATUS.RATE_LIMITED
+    } else if (rawAiStatus === 'failed') {
+      aiStatus = AI_STATUS.FAILED
     } else if (queuedStatus && queuedStatus !== AI_STATUS.AWAITING_ANALYSIS) {
       aiStatus = queuedStatus
     }
@@ -126,6 +137,8 @@ export function FeedbackPage() {
       linkedFeatureId: rawFeatureId || null,
       analysis: rawAnalysis || null,
       aiStatus,
+      aiError: rawError,
+      batchId: item.batchId || item.batch_id || null,
     }
   }
 
@@ -208,6 +221,8 @@ export function FeedbackPage() {
   const [isBatchAnalyzing, setIsBatchAnalyzing] = useState(false)
   const [showCSVModal, setShowCSVModal] = useState(false)
   const [showDuplicateWarning, setShowDuplicateWarning] = useState(null) // holds matched duplicates
+  const [csvBatchSummary, setCsvBatchSummary] = useState(null)
+  const [isRetryingBatchAi, setIsRetryingBatchAi] = useState(false)
 
   // Create/Edit form state
   const [formTitle, setFormTitle] = useState('')
@@ -225,6 +240,48 @@ export function FeedbackPage() {
   // CSV Import state
   const [csvPreview, setCsvPreview] = useState(null)
   const [csvError, setCsvError] = useState('')
+
+  // Recover active batch summary on page load or refresh
+  React.useEffect(() => {
+    const savedBatchId = sessionStorage.getItem('productmind_active_batch_id')
+    if (savedBatchId && isValidObjectId(currentWorkspace?.id) && isBackendConfigured()) {
+      feedbackService.getBatchStatus(savedBatchId, currentWorkspace.id)
+        .then(status => {
+          if (status) {
+            setCsvBatchSummary({
+              batchId: savedBatchId,
+              totalRows: status.totalRows,
+              acceptedRows: status.acceptedRows,
+              rejectedRows: status.rejectedRows,
+              duplicateRows: status.duplicateRows,
+            })
+          }
+        })
+        .catch(() => {
+          sessionStorage.removeItem('productmind_active_batch_id')
+        })
+    }
+  }, [currentWorkspace?.id])
+
+  // Automatically poll feedback list when background AI analysis is in flight
+  React.useEffect(() => {
+    const hasActiveAi = backendFeedback?.some(
+      f => f.aiStatus === AI_STATUS.ANALYZING || f.aiStatus === AI_STATUS.QUEUED
+    )
+    if (!hasActiveAi || !isValidObjectId(currentWorkspace?.id) || !isBackendConfigured()) return
+
+    const interval = setInterval(() => {
+      feedbackService.getFeedbackList({ workspaceId: currentWorkspace.id })
+        .then(data => {
+          if (data?.items) {
+            setBackendFeedback(data.items.map(mapBackendItem))
+          }
+        })
+        .catch(err => console.warn('Background AI poll warning:', err))
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [backendFeedback, currentWorkspace?.id])
 
   // Categories list
   const categories = ['All', 'Performance', 'Integrations', 'Usability', 'Reliability', 'Pricing', 'Feature Requests', 'Satisfaction']
@@ -267,6 +324,33 @@ export function FeedbackPage() {
       percent,
     }
   }, [activeFeedback])
+
+  // Active CSV Batch AI Progress
+  const csvBatchProgress = useMemo(() => {
+    if (!csvBatchSummary) return null
+    const batchItems = (backendFeedback || []).filter(item => item.batchId === csvBatchSummary.batchId)
+    const targetCount = csvBatchSummary.acceptedRows || batchItems.length
+    if (targetCount === 0) return null
+
+    const completed = batchItems.filter(i => i.aiStatus === AI_STATUS.COMPLETED || Boolean(i.analysis)).length
+    const inFlight = batchItems.filter(i => i.aiStatus === AI_STATUS.ANALYZING || i.aiStatus === AI_STATUS.QUEUED).length
+    const rateLimited = batchItems.filter(i => i.aiStatus === AI_STATUS.RATE_LIMITED).length
+    const failed = batchItems.filter(i => i.aiStatus === AI_STATUS.FAILED).length
+    const percent = Math.min(100, Math.round((completed / targetCount) * 100))
+    const isDone = inFlight === 0 && (completed + failed + rateLimited >= targetCount)
+    const failedOrRateLimited = failed + rateLimited
+
+    return {
+      total: targetCount,
+      completed,
+      inFlight,
+      rateLimited,
+      failed,
+      failedOrRateLimited,
+      percent,
+      isDone,
+    }
+  }, [csvBatchSummary, backendFeedback])
 
   const filteredFeedback = useMemo(() => {
     return activeFeedback.filter(item => {
@@ -557,13 +641,41 @@ export function FeedbackPage() {
     reader.readAsText(file)
   }
 
+  const handleRetryBatchAi = async () => {
+    if (!csvBatchSummary?.batchId || !isValidObjectId(currentWorkspace?.id)) return
+    setIsRetryingBatchAi(true)
+    try {
+      const res = await feedbackService.retryBatchAi(csvBatchSummary.batchId, currentWorkspace.id)
+      addToast(`Re-queued ${res.requeuedRows} failed/rate-limited items for AI analysis`, 'success')
+      const fresh = await feedbackService.getFeedbackList({ workspaceId: currentWorkspace.id })
+      if (fresh?.items) {
+        setBackendFeedback(fresh.items.map(mapBackendItem))
+      }
+    } catch (err) {
+      addToast(err?.message || 'Failed to retry batch AI analysis', 'error')
+    } finally {
+      setIsRetryingBatchAi(false)
+    }
+  }
+
   const confirmCSVImport = async () => {
     if (csvPreview && csvPreview.records.length > 0) {
       if (isBackendConfigured() && isValidObjectId(currentWorkspace?.id)) {
         try {
           const res = await feedbackService.batchImport(csvPreview.records, currentWorkspace.id)
           const accepted = res?.acceptedRows ?? res?.summary?.acceptedRows ?? csvPreview.records.length
-          addToast(`Imported ${accepted} feedback records into workspace`, 'success')
+          const batchId = res?.batchId || res?.batch_id
+          if (batchId) {
+            sessionStorage.setItem('productmind_active_batch_id', batchId)
+            setCsvBatchSummary({
+              batchId,
+              totalRows: res.totalRows || csvPreview.records.length,
+              acceptedRows: accepted,
+              rejectedRows: res.rejectedRows || 0,
+              duplicateRows: res.duplicateRows || 0,
+            })
+          }
+          addToast(`Imported ${accepted} feedback records into workspace (AI queue started)`, 'success')
           const fresh = await feedbackService.getFeedbackList({ workspaceId: currentWorkspace.id })
           if (fresh?.items) {
             setBackendFeedback(fresh.items.map(mapBackendItem))
@@ -712,6 +824,112 @@ export function FeedbackPage() {
           </Button>
         </div>
       </div>
+
+      {/* CSV Batch Ingestion & AI Queue Banner */}
+      {csvBatchSummary && (
+        <Card className="p-4 border-2 border-brand-500/30 bg-gradient-to-r from-brand-50/40 via-white to-indigo-50/30 dark:from-slate-900 dark:via-slate-900/90 dark:to-indigo-950/20 shadow-sm relative overflow-hidden">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1.5 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <FileSpreadsheet className="w-5 h-5 text-brand-600 dark:text-brand-400" />
+                <span className="text-sm font-bold text-slate-900 dark:text-white">
+                  CSV Ingestion & Automatic AI Pipeline
+                </span>
+                {csvBatchProgress && (
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    csvBatchProgress.isDone
+                      ? (csvBatchProgress.failedOrRateLimited > 0
+                          ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20'
+                          : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20')
+                      : 'bg-brand-500/10 text-brand-700 dark:text-brand-300 border border-brand-500/20'
+                  }`}>
+                    {!csvBatchProgress.isDone ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-600" />
+                        <span>Processing Queue ({csvBatchProgress.percent}%)</span>
+                      </>
+                    ) : csvBatchProgress.failedOrRateLimited > 0 ? (
+                      <>
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Completed with {csvBatchProgress.failedOrRateLimited} pending/failed</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>AI Analysis Complete (100%)</span>
+                      </>
+                    )}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-4 text-xs text-slate-600 dark:text-slate-300 flex-wrap pt-0.5">
+                <span>Total Rows: <strong className="text-slate-900 dark:text-white">{csvBatchSummary.totalRows}</strong></span>
+                <span className="text-emerald-600 dark:text-emerald-400">Imported: <strong>{csvBatchSummary.acceptedRows}</strong></span>
+                {csvBatchSummary.rejectedRows > 0 && (
+                  <span className="text-rose-600 dark:text-rose-400">Invalid Rejected: <strong>{csvBatchSummary.rejectedRows}</strong></span>
+                )}
+                {csvBatchSummary.duplicateRows > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400">Duplicates Skipped: <strong>{csvBatchSummary.duplicateRows}</strong></span>
+                )}
+                {csvBatchProgress && (
+                  <>
+                    <span className="text-indigo-600 dark:text-indigo-400">AI Analyzed: <strong>{csvBatchProgress.completed} / {csvBatchProgress.total}</strong></span>
+                    {csvBatchProgress.inFlight > 0 && (
+                      <span className="text-sky-600 dark:text-sky-400">In Flight: <strong>{csvBatchProgress.inFlight}</strong></span>
+                    )}
+                    {csvBatchProgress.rateLimited > 0 && (
+                      <span className="text-amber-600 dark:text-amber-400">Rate Limited: <strong>{csvBatchProgress.rateLimited}</strong></span>
+                    )}
+                    {csvBatchProgress.failed > 0 && (
+                      <span className="text-rose-600 dark:text-rose-400">Failed: <strong>{csvBatchProgress.failed}</strong></span>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {csvBatchProgress && csvBatchProgress.failedOrRateLimited > 0 && !csvBatchProgress.inFlight && (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  icon={RefreshCw}
+                  disabled={isRetryingBatchAi}
+                  onClick={handleRetryBatchAi}
+                  className="border-amber-400 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                >
+                  {isRetryingBatchAi ? 'Re-queueing...' : 'Retry Failed / Rate-Limited'}
+                </Button>
+              )}
+              <button
+                onClick={() => {
+                  sessionStorage.removeItem('productmind_active_batch_id')
+                  setCsvBatchSummary(null)
+                }}
+                className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="Dismiss Banner"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Live Progress Bar */}
+          {csvBatchProgress && (
+            <div className="mt-3 w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-500 rounded-full ${
+                  csvBatchProgress.isDone
+                    ? (csvBatchProgress.failedOrRateLimited > 0 ? 'bg-amber-500' : 'bg-emerald-500')
+                    : 'bg-brand-600 animate-pulse'
+                }`}
+                style={{ width: `${csvBatchProgress.percent}%` }}
+              />
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Top Stat Cards: AI Analysis & Corpus Status */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">

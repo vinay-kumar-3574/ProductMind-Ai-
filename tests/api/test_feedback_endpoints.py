@@ -67,6 +67,7 @@ def api_state():
         status=MembershipStatus.ACTIVE,
     )
     feedback_repo = AsyncMock()
+    feedback_repo.get_batch_ai_summary.return_value = {}
     batch_repo = AsyncMock()
     feature_repo = AsyncMock()
     audit_repo = AsyncMock()

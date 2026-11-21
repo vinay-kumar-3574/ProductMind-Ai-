@@ -41,6 +41,7 @@ from app.repositories import (
     WorkspaceMembershipRepository,
     WorkspaceRepository,
 )
+from app.services.feedback_ai_background import FeedbackAIBackgroundWorker
 from app.schemas.feedback import (
     FeedbackBatchIngestResponse,
     FeedbackBatchRequest,
@@ -97,6 +98,8 @@ def _feedback_response(item: FeedbackItem) -> FeedbackItemResponse:
         processing_status=item.processing_status,
         ai_analysis=item.ai_analysis,
         analyzed_at=item.analyzed_at,
+        ai_status=item.ai_status or ("completed" if item.ai_analysis else "awaiting_analysis"),
+        ai_error=item.ai_error,
         created_at=item.created_at,
     )
 
@@ -303,6 +306,7 @@ async def _create_feedback(
         tags=item.tags,
         feedback_date=item.feedback_date,
         promoted_feature_id=feature_id,
+        ai_status="queued" if batch_id is not None else "awaiting_analysis",
     )
     try:
         return await feedback_repo.create(record), True
@@ -548,6 +552,14 @@ async def ingest_feedback_batch(
         str(batch.id),
         f"Feedback batch processed: {accepted} accepted, {duplicate} duplicate, {rejected} rejected",
     )
+
+    if accepted > 0:
+        FeedbackAIBackgroundWorker.get_instance().trigger_worker(
+            feedback_repo.db,
+            workspace_id=workspace.id,
+            batch_id=batch.id,
+        )
+
     response.status_code = status.HTTP_201_CREATED
     return FeedbackBatchIngestResponse(
         id=str(batch.id),
@@ -689,6 +701,14 @@ async def retry_feedback_batch(
         f"Feedback batch retry processed: {accepted} accepted, {duplicate} duplicate, {rejected_again} rejected",
         action=AuditAction.UPDATED,
     )
+
+    if accepted > 0:
+        FeedbackAIBackgroundWorker.get_instance().trigger_worker(
+            feedback_repo.db,
+            workspace_id=workspace.id,
+            batch_id=batch.id,
+        )
+
     return FeedbackBatchIngestResponse(
         id=str(batch.id),
         workspaceId=str(workspace.id),
@@ -713,6 +733,7 @@ async def get_feedback_batch_status(
     workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
     membership_repo: WorkspaceMembershipRepository = Depends(get_workspace_membership_repository),
     batch_repo: FeedbackBatchRepository = Depends(get_feedback_batch_repository),
+    feedback_repo: FeedbackRepository = Depends(get_feedback_repository),
 ) -> FeedbackBatchStatusResponse:
     workspace = await _load_workspace(
         workspace_id,
@@ -725,6 +746,11 @@ async def get_feedback_batch_status(
     batch = await batch_repo.find_by_workspace_and_id(batch_id, workspace.id)
     if batch is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
+
+    ai_summary = await feedback_repo.get_batch_ai_summary(batch.id, workspace.id)
+    if not isinstance(ai_summary, dict):
+        ai_summary = {}
+
     return FeedbackBatchStatusResponse(
         id=str(batch.id),
         workspaceId=str(batch.workspace_id),
@@ -734,9 +760,55 @@ async def get_feedback_batch_status(
         rejectedRows=batch.rejected_rows,
         duplicateRows=batch.duplicate_rows,
         errorSummary=[error.model_dump(by_alias=True) for error in batch.error_summary],
+        aiCompletedRows=int(ai_summary.get("completed", 0) or 0),
+        aiQueuedRows=int((ai_summary.get("queued", 0) or 0) + (ai_summary.get("analyzing", 0) or 0)),
+        aiRateLimitedRows=int(ai_summary.get("rate_limited", 0) or 0),
+        aiFailedRows=int(ai_summary.get("failed", 0) or 0),
         startedAt=batch.started_at,
         completedAt=batch.completed_at,
     )
+
+
+@router.post(
+    "/batch/{batch_id}/retry-failed-ai",
+    status_code=status.HTTP_200_OK,
+    summary="Retry failed or rate-limited AI analyses in batch",
+)
+async def retry_failed_batch_ai(
+    batch_id: str,
+    workspace_id: str = Query(..., alias="workspaceId"),
+    current_user: User = Depends(get_current_user),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+    membership_repo: WorkspaceMembershipRepository = Depends(get_workspace_membership_repository),
+    feedback_repo: FeedbackRepository = Depends(get_feedback_repository),
+    batch_repo: FeedbackBatchRepository = Depends(get_feedback_batch_repository),
+) -> Dict[str, Any]:
+    """Re-enqueues failed or rate-limited items in this batch for automatic background AI analysis."""
+    workspace = await _load_workspace(
+        workspace_id,
+        current_user,
+        workspace_repo,
+        membership_repo,
+    )
+    if not ObjectId.is_valid(batch_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
+    batch = await batch_repo.find_by_workspace_and_id(batch_id, workspace.id)
+    if batch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
+
+    requeued = await feedback_repo.retry_failed_batch_ai(batch.id, workspace.id)
+    if requeued > 0:
+        FeedbackAIBackgroundWorker.get_instance().trigger_worker(
+            feedback_repo.db,
+            workspace_id=workspace.id,
+            batch_id=batch.id,
+        )
+
+    return {
+        "batchId": str(batch.id),
+        "requeuedRows": requeued,
+        "message": f"Re-queued {requeued} items for automatic background AI analysis.",
+    }
 
 
 @router.get(

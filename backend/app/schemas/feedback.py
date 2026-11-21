@@ -98,6 +98,8 @@ class FeedbackItemResponse(BaseModel):
     processing_status: FeedbackProcessingStatus = Field(alias="processingStatus")
     ai_analysis: Optional[Dict[str, Any]] = Field(default=None, alias="aiAnalysis")
     analyzed_at: Optional[datetime] = Field(default=None, alias="analyzedAt")
+    ai_status: Optional[str] = Field(default=None, alias="aiStatus")
+    ai_error: Optional[str] = Field(default=None, alias="aiError")
     created_at: Optional[datetime] = Field(default=None, alias="createdAt")
 
 
@@ -160,5 +162,9 @@ class FeedbackBatchStatusResponse(BaseModel):
     rejected_rows: int = Field(alias="rejectedRows")
     duplicate_rows: int = Field(alias="duplicateRows")
     error_summary: List[Dict[str, Any]] = Field(alias="errorSummary")
+    ai_completed_rows: int = Field(default=0, alias="aiCompletedRows")
+    ai_queued_rows: int = Field(default=0, alias="aiQueuedRows")
+    ai_rate_limited_rows: int = Field(default=0, alias="aiRateLimitedRows")
+    ai_failed_rows: int = Field(default=0, alias="aiFailedRows")
     started_at: Optional[datetime] = Field(default=None, alias="startedAt")
     completed_at: Optional[datetime] = Field(default=None, alias="completedAt")
