@@ -63,5 +63,12 @@ class Settings:
     AUDIT_LOG_RETENTION_DAYS: int = int(os.getenv("AUDIT_LOG_RETENTION_DAYS", "180"))
     AUTH_SESSION_RETENTION_DAYS: int = int(os.getenv("AUTH_SESSION_RETENTION_DAYS", "30"))
 
+    def __init__(self):
+        if self.ENVIRONMENT.lower() in ("production", "prod"):
+            if not self.JWT_SECRET or self.JWT_SECRET == "dev_jwt_secret_productmind_ai_change_in_production" or len(self.JWT_SECRET) < 32:
+                raise ValueError(
+                    "In production environment, JWT_SECRET must be set to a cryptographically secure string of at least 32 characters."
+                )
+
 
 settings = Settings()

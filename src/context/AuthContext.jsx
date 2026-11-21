@@ -99,7 +99,13 @@ export function AuthProvider({ children }) {
     safeRemove(AUTH_TOKEN_KEY)
   }
 
-  const updateProfile = (updates) => {
+  const updateProfile = async (updates) => {
+    const res = await authService.updateProfile(updates)
+    if (res.success && res.data) {
+      setCurrentUser(res.data)
+      safeSet(STORAGE_KEYS.USER, res.data)
+      return { success: true, data: res.data }
+    }
     const updated = { ...currentUser, ...updates }
     setCurrentUser(updated)
     safeSet(STORAGE_KEYS.USER, updated)
@@ -107,6 +113,7 @@ export function AuthProvider({ children }) {
     if (session) {
       safeSet(AUTH_TOKEN_KEY, { ...session, user: updated })
     }
+    return { success: true, data: updated }
   }
 
   const forgotPassword = async (email) => {

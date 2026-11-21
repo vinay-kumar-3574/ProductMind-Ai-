@@ -110,40 +110,20 @@ export const authService = {
           }
         }
 
-        // If password is demo123, grant immediate access so PM can always enter
-        if (cleanPass === 'demo123') {
-          const pmUser = {
-            id: 'pm-lead-01',
-            name: cleanEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-            email: cleanEmail,
-            role: 'Lead Product Architect',
-            avatar: 'PM',
-            workspaceName: 'Apex SaaS Product Operations',
-          }
-          const session = {
-            token: `mock_pm_jwt_${Date.now()}`,
-            access_token: `mock_pm_jwt_${Date.now()}`,
-            user: pmUser,
-            rememberMe,
-            createdAt: Date.now(),
-            expiresAt: Date.now() + SESSION_EXPIRY_MS,
-            isDemo: true,
-          }
-          localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(session))
-          return {
-            success: true,
-            data: { user: pmUser, token: session.token },
-            status: 200,
-            isDemo: true,
-          }
+        // Return backend error directly when configured
+        return {
+          success: false,
+          error: res.error || (res.data && res.data.detail) || 'Invalid email or password.',
+          status: res.status || 401,
+          isDemo: false,
         }
-
-        // If backend explicitly rejected credentials
-        if (res.status === 401 || res.status === 422) {
-          return res
+      } catch (err) {
+        return {
+          success: false,
+          error: err.message || 'Network error or backend unreachable.',
+          status: 503,
+          isDemo: false,
         }
-      } catch {
-        // Fall back to local validation
       }
     }
 
@@ -293,6 +273,35 @@ export const authService = {
       localStorage.removeItem('pmai_active_workspace_id')
     }
     return { success: true }
+  },
+
+  /**
+   * Update authenticated user's profile
+   */
+  async updateProfile(updates) {
+    if (apiClient.isConfigured()) {
+      try {
+        const res = await apiClient.patch(API_ENDPOINTS.AUTH.ME, updates)
+        if (res.success && res.data) {
+          const session = this.getCurrentSession()
+          if (session) {
+            session.user = { ...session.user, ...res.data }
+            localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(session))
+          }
+          return { success: true, data: res.data }
+        }
+        return { success: false, error: res.error || 'Failed to update profile on server.' }
+      } catch (err) {
+        console.warn('Backend updateProfile error, falling back to local update:', err)
+      }
+    }
+    const session = this.getCurrentSession()
+    if (session) {
+      session.user = { ...session.user, ...updates }
+      localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(session))
+      return { success: true, data: session.user }
+    }
+    return { success: false, error: 'No active session found.' }
   },
 }
 

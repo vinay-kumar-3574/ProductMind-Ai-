@@ -32,6 +32,7 @@ import {
 import { Card, Badge, Button, Modal, DemoModeBanner, AIClassificationCard } from '../components/common'
 import { parseFeedbackCSV, generateSampleCSV, exportFeedbackToCSV } from '../services/csvService'
 import { feedbackService } from '../services/api/feedbackService'
+import { isBackendConfigured } from '../services/api/apiClient'
 import { useWorkspace } from '../context/WorkspaceContext'
 import { InsightsPage } from './InsightsPage'
 
@@ -84,6 +85,44 @@ export function FeedbackPage() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
   const { currentWorkspace } = useWorkspace()
+  const [backendFeedback, setBackendFeedback] = useState(null)
+  const [isLoadingBackendFeedback, setIsLoadingBackendFeedback] = useState(false)
+
+  // Fetch workspace-scoped feedback on workspace switch when backend is configured
+  React.useEffect(() => {
+    if (!currentWorkspace?.id || !isBackendConfigured()) {
+      setBackendFeedback(null)
+      return
+    }
+    let cancelled = false
+    setIsLoadingBackendFeedback(true)
+    feedbackService.getFeedbackList({ workspaceId: currentWorkspace.id })
+      .then((data) => {
+        if (!cancelled && data?.items) {
+          const mapped = data.items.map(item => ({
+            id: String(item.id || item._id),
+            title: item.title,
+            description: item.description || '',
+            customer: item.customer_name || 'Customer',
+            company: item.company_name || 'Organization',
+            category: item.category ? item.category.replace(/_/g, ' ') : 'Feature Requests',
+            sentiment: item.sentiment ? item.sentiment.charAt(0).toUpperCase() + item.sentiment.slice(1) : 'Neutral',
+            priority: item.source_priority ? item.source_priority.charAt(0).toUpperCase() + item.source_priority.slice(1) : 'Medium',
+            tags: item.tags || [],
+            date: item.created_at ? item.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+            linkedFeatureId: item.linked_feature_id || null,
+          }))
+          setBackendFeedback(mapped)
+        }
+      })
+      .catch((err) => {
+        console.warn('Could not fetch workspace feedback:', err)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingBackendFeedback(false)
+      })
+    return () => { cancelled = true }
+  }, [currentWorkspace?.id])
   const [inspectingFeedbackItem, setInspectingFeedbackItem] = useState(null)
   const [aiAnalysis, setAiAnalysis] = useState(null)
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false)
@@ -119,8 +158,9 @@ export function FeedbackPage() {
   }
 
   // Filtered and Sorted list
+  const activeFeedback = backendFeedback !== null ? backendFeedback : feedback
   const filteredFeedback = useMemo(() => {
-    return feedback.filter(item => {
+    return activeFeedback.filter(item => {
       // Text search
       if (searchTerm) {
         const q = searchTerm.toLowerCase()
@@ -155,7 +195,7 @@ export function FeedbackPage() {
       }
       return 0
     })
-  }, [feedback, searchTerm, selectedCategory, selectedSentiment, selectedPriority, linkedFilter, sortBy])
+  }, [activeFeedback, searchTerm, selectedCategory, selectedSentiment, selectedPriority, linkedFilter, sortBy])
 
   // Pagination slicing
   const totalPages = Math.ceil(filteredFeedback.length / pageSize) || 1

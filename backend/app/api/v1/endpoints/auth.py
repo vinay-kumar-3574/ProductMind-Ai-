@@ -4,8 +4,10 @@ Provides registration, login, JWT issuance, refresh token rotation, logout,
 and current user profile inspection.
 """
 
+import time
 import uuid
-from typing import Dict, Any
+from collections import defaultdict
+from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.core.config import settings
@@ -28,7 +30,7 @@ from app.schemas.auth import (
     TokenRefreshResponse,
     MessageResponse,
 )
-from app.schemas.user import UserResponse
+from app.schemas.user import UserResponse, UserUpdate
 from app.api.dependencies import (
     get_user_repository,
     get_auth_session_repository,
@@ -38,6 +40,32 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.auth_session_repository import AuthSessionRepository
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+# In-memory login rate limiter (max 5 failed attempts per 60s window per IP)
+_LOGIN_ATTEMPTS: Dict[str, List[float]] = defaultdict(list)
+_MAX_FAILED_ATTEMPTS = 5
+_RATE_LIMIT_WINDOW_SECONDS = 60.0
+
+
+def _check_login_rate_limit(client_ip: str) -> None:
+    now = time.time()
+    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
+    attempts = [t for t in _LOGIN_ATTEMPTS[client_ip] if t > cutoff]
+    _LOGIN_ATTEMPTS[client_ip] = attempts
+    if len(attempts) >= _MAX_FAILED_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please wait before trying again.",
+        )
+
+
+def _record_failed_login(client_ip: str) -> None:
+    _LOGIN_ATTEMPTS[client_ip].append(time.time())
+
+
+def _reset_login_rate_limit(client_ip: str) -> None:
+    if client_ip in _LOGIN_ATTEMPTS:
+        del _LOGIN_ATTEMPTS[client_ip]
 
 
 @router.post(
@@ -103,16 +131,22 @@ async def login_user(
     user_repo: UserRepository = Depends(get_user_repository),
     session_repo: AuthSessionRepository = Depends(get_auth_session_repository),
 ) -> TokenResponse:
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    _check_login_rate_limit(client_ip)
+
     # 1. Retrieve user by email
     user = await user_repo.find_by_email(payload.email)
 
     # 2. Verify existence, active state, and password hash (constant error message to prevent enumeration)
     if not user or not user.is_active or not verify_password(payload.password, user.password_hash):
+        _record_failed_login(client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    _reset_login_rate_limit(client_ip)
 
     # 3. Update last login timestamp
     await user_repo.update_last_login(user.id)
@@ -290,6 +324,63 @@ async def get_me(
         is_active=current_user.is_active,
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
+    )
+
+
+@router.patch(
+    "/me",
+    status_code=status.HTTP_200_OK,
+    summary="Update Current User Profile",
+    description="Updates the profile of the currently authenticated user (name, avatar, theme, reduced_motion).",
+    response_model=UserResponse,
+)
+async def update_me(
+    payload: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    user_repo: UserRepository = Depends(get_user_repository),
+) -> UserResponse:
+    updates: Dict[str, Any] = {}
+    if payload.name is not None:
+        updates["name"] = payload.name.strip()
+    if payload.avatar is not None:
+        updates["avatar"] = payload.avatar
+    if payload.theme is not None:
+        updates["theme"] = payload.theme
+    if payload.reduced_motion is not None:
+        updates["reducedMotion"] = payload.reduced_motion
+
+    if not updates:
+        return UserResponse(
+            id=str(current_user.id),
+            name=current_user.name,
+            email=current_user.email,
+            platform_role=current_user.platform_role,
+            avatar=current_user.avatar,
+            theme=current_user.theme,
+            reduced_motion=current_user.reduced_motion,
+            is_active=current_user.is_active,
+            created_at=current_user.created_at,
+            updated_at=current_user.updated_at,
+        )
+
+    updated_user = await user_repo.update(current_user.id, updates)
+    if updated_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    return UserResponse(
+        id=str(updated_user.id),
+        name=updated_user.name,
+        email=updated_user.email,
+        platform_role=updated_user.platform_role,
+        avatar=updated_user.avatar,
+        theme=updated_user.theme,
+        reduced_motion=updated_user.reduced_motion,
+        is_active=updated_user.is_active,
+        created_at=updated_user.created_at,
+        updated_at=updated_user.updated_at,
     )
 
 

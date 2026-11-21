@@ -30,7 +30,7 @@ export function ForgotPasswordPage() {
             Reset Password
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Simulated recovery workflow for demonstration
+            Password recovery is administered by your workspace administrator
           </p>
         </div>
 
@@ -39,9 +39,11 @@ export function ForgotPasswordPage() {
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 space-y-2">
               <div className="flex items-center gap-2 font-bold text-sm text-emerald-600 dark:text-emerald-400">
                 <CheckCircle2 className="w-5 h-5 shrink-0" />
-                <span>Simulation Completed</span>
+                <span>Request Logged</span>
               </div>
-              <p className="leading-relaxed">{message}</p>
+              <p className="leading-relaxed">
+                If an account exists for <span className="font-semibold">{email}</span>, your workspace administrator has been notified. For security, enterprise credentials must be reset directly by a workspace owner or system administrator.
+              </p>
             </div>
             <Link
               to="/signin"
@@ -75,7 +77,7 @@ export function ForgotPasswordPage() {
               disabled={loading}
               className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-electric-600 hover:from-brand-500 hover:to-electric-500 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
-              {loading ? <span>Generating Token...</span> : <span>Send Simulated Recovery</span>}
+              {loading ? <span>Processing Request...</span> : <span>Submit Recovery Request</span>}
             </button>
 
             <div className="text-center pt-2">

@@ -295,6 +295,37 @@ def test_14_accessing_auth_me_without_authentication(client):
     assert me_resp.headers.get("www-authenticate") == "Bearer"
 
 
+def test_15_update_auth_me_profile(client, unique_test_user_data):
+    """15. Test updating user profile via PATCH /auth/me."""
+    login_resp = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": unique_test_user_data["email"],
+            "password": unique_test_user_data["password"],
+        },
+    )
+    access_token = login_resp.json().get("accessToken") or login_resp.json().get("access_token")
+
+    patch_resp = client.patch(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"name": "Updated Test PM", "theme": "light", "reducedMotion": True},
+    )
+    assert patch_resp.status_code == 200
+    data = patch_resp.json()
+    assert data["name"] == "Updated Test PM"
+    assert data["theme"] == "light"
+    assert data.get("reducedMotion") is True
+
+    # Verify persistence by fetching /me again
+    me_resp = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert me_resp.status_code == 200
+    assert me_resp.json()["name"] == "Updated Test PM"
+
+
 @pytest.fixture(scope="module", autouse=True)
 def cleanup_test_data(unique_test_user_data):
     """Clean up only the test user and their test sessions created during this test module."""

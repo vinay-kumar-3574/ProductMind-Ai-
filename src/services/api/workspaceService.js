@@ -31,7 +31,9 @@ export const workspaceService = {
    * Get details for a specific workspace
    */
   async getWorkspace(workspaceId) {
-    const url = API_ENDPOINTS.WORKSPACES.DETAIL.replace(':id', workspaceId)
+    const url = typeof API_ENDPOINTS.WORKSPACES.DETAIL === 'function'
+      ? API_ENDPOINTS.WORKSPACES.DETAIL(workspaceId)
+      : API_ENDPOINTS.WORKSPACES.DETAIL.replace(':id', workspaceId)
     const response = await apiClient.get(url)
     return response.data
   },
@@ -54,8 +56,53 @@ export const workspaceService = {
    * Update workspace settings or name
    */
   async updateWorkspace(workspaceId, data) {
-    const url = API_ENDPOINTS.WORKSPACES.DETAIL.replace(':id', workspaceId)
+    const url = API_ENDPOINTS.WORKSPACES.DETAIL(workspaceId)
     const response = await apiClient.patch(url, data)
+    return response.data
+  },
+
+  /**
+   * List all members of a workspace
+   */
+  async getMembers(workspaceId, params = {}) {
+    const url = API_ENDPOINTS.WORKSPACES.MEMBERS(workspaceId)
+    const response = await apiClient.get(url, { params })
+    return response.data || []
+  },
+
+  /**
+   * Add an active user to the workspace by email
+   */
+  async addMember(workspaceId, { email, role = 'member' }) {
+    const url = API_ENDPOINTS.WORKSPACES.MEMBERS(workspaceId)
+    const response = await apiClient.post(url, { email, role })
+    return response.data
+  },
+
+  /**
+   * Update a workspace member's role (admin, member, viewer)
+   */
+  async updateMemberRole(workspaceId, userId, role) {
+    const url = `${API_ENDPOINTS.WORKSPACES.MEMBERS(workspaceId)}/${userId}`
+    const response = await apiClient.patch(url, { role })
+    return response.data
+  },
+
+  /**
+   * Remove a member from the workspace
+   */
+  async removeMember(workspaceId, userId) {
+    const url = `${API_ENDPOINTS.WORKSPACES.MEMBERS(workspaceId)}/${userId}`
+    const response = await apiClient.delete(url)
+    return response.data
+  },
+
+  /**
+   * Leave the workspace (current user)
+   */
+  async leaveWorkspace(workspaceId) {
+    const url = `${API_ENDPOINTS.WORKSPACES.MEMBERS(workspaceId)}/me`
+    const response = await apiClient.delete(url)
     return response.data
   },
 }

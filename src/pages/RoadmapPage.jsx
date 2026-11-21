@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useWorkspace } from '../context/WorkspaceContext'
 import {
   Milestone,
   Plus,
@@ -44,12 +45,15 @@ export function RoadmapPage() {
 
   const {
     activeWorkspace,
-    currentWorkspace,
+    currentWorkspace: appWorkspace,
     features = [],
     addToast,
   } = useApp()
+  const { currentWorkspace: contextWorkspace } = useWorkspace()
 
-  const workspaceId = activeWorkspace?.id || currentWorkspace?.id || getActiveWorkspaceId()
+  // Prefer reactive WorkspaceContext; allow useApp workspace override for isolated testing
+  const currentWorkspace = appWorkspace || activeWorkspace || contextWorkspace
+  const workspaceId = currentWorkspace?.id || getActiveWorkspaceId()
 
   // ---------------------------------------------------------------------------
   // Data State (Backed by MongoDB Atlas)

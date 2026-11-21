@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Settings,
   Moon,
@@ -18,17 +18,29 @@ import {
   CheckCircle2,
   AlertTriangle,
   Zap,
+  Users,
+  UserPlus,
+  Trash2,
+  Mail,
+  ShieldCheck,
+  Check,
+  Loader2,
+  Save,
 } from 'lucide-react'
 import { useTheme } from '../context/ThemeContext'
 import { useAuth } from '../context/AuthContext'
 import { useApp } from '../context/AppContext'
+import { useWorkspace } from '../context/WorkspaceContext'
+import { workspaceService } from '../services/api/workspaceService'
+import { isBackendConfigured } from '../services/api/apiClient'
 import { Button, Card, Badge, Modal } from '../components/common'
 import { exportAllData } from '../services/storageService'
 
 export default function SettingsPage() {
   const { theme, setTheme, reducedMotion, toggleReducedMotion } = useTheme()
-  const { currentUser } = useAuth()
+  const { currentUser, updateProfile } = useAuth()
   const user = currentUser
+  const { currentWorkspace } = useWorkspace()
   const {
     setIntroSeen,
     setTourSeen,
@@ -39,7 +51,173 @@ export default function SettingsPage() {
     addToast,
   } = useApp()
 
-  const [workspaceName, setWorkspaceName] = useState('Acme Cloud Intelligence')
+  const [workspaceName, setWorkspaceName] = useState(currentWorkspace?.name || 'Apex Product Ops')
+  const [userName, setUserName] = useState(user?.name || '')
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [isSavingWorkspace, setIsSavingWorkspace] = useState(false)
+
+  // Team Members state
+  const [members, setMembers] = useState([])
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false)
+  const [newMemberEmail, setNewMemberEmail] = useState('')
+  const [newMemberRole, setNewMemberRole] = useState('member')
+  const [isAddingMember, setIsAddingMember] = useState(false)
+  const [memberError, setMemberError] = useState('')
+
+  // Sync state when workspace or user changes
+  useEffect(() => {
+    if (currentWorkspace?.name) {
+      setWorkspaceName(currentWorkspace.name)
+    }
+  }, [currentWorkspace?.name])
+
+  useEffect(() => {
+    if (user?.name) {
+      setUserName(user.name)
+    }
+  }, [user?.name])
+
+  // Fetch workspace members
+  const fetchMembers = useCallback(async () => {
+    if (!currentWorkspace?.id || !isBackendConfigured()) {
+      setMembers([
+        {
+          userId: user?.id || 'usr-current',
+          name: user?.name || 'Lead Product Manager',
+          email: user?.email || 'pm@productmind.ai',
+          role: 'admin',
+          status: 'active',
+          joinedAt: new Date().toISOString(),
+        },
+      ])
+      return
+    }
+    setIsLoadingMembers(true)
+    setMemberError('')
+    try {
+      const data = await workspaceService.getMembers(currentWorkspace.id)
+      setMembers(Array.isArray(data) ? data : [])
+    } catch (err) {
+      console.warn('Could not load workspace members:', err)
+      setMembers([
+        {
+          userId: user?.id || 'usr-current',
+          name: user?.name || 'Lead Product Manager',
+          email: user?.email || 'pm@productmind.ai',
+          role: 'admin',
+          status: 'active',
+          joinedAt: new Date().toISOString(),
+        },
+      ])
+    } finally {
+      setIsLoadingMembers(false)
+    }
+  }, [currentWorkspace?.id, user])
+
+  useEffect(() => {
+    fetchMembers()
+  }, [fetchMembers])
+
+  const handleSaveProfile = async () => {
+    if (!userName.trim()) return
+    setIsSavingProfile(true)
+    try {
+      const res = await updateProfile({ name: userName.trim() })
+      if (res?.success) {
+        addToast('Profile name updated successfully', 'success')
+      } else {
+        addToast(res?.error || 'Failed to update profile', 'error')
+      }
+    } catch (err) {
+      addToast(err?.message || 'Failed to update profile', 'error')
+    } finally {
+      setIsSavingProfile(false)
+    }
+  }
+
+  const handleSaveWorkspace = async () => {
+    if (!workspaceName.trim() || !currentWorkspace?.id) return
+    setIsSavingWorkspace(true)
+    try {
+      if (isBackendConfigured()) {
+        await workspaceService.updateWorkspace(currentWorkspace.id, { name: workspaceName.trim() })
+        addToast('Workspace name updated in MongoDB Atlas', 'success')
+      } else {
+        addToast('Workspace name updated locally', 'success')
+      }
+    } catch (err) {
+      addToast(err?.message || 'Failed to update workspace name', 'error')
+    } finally {
+      setIsSavingWorkspace(false)
+    }
+  }
+
+  const handleAddMember = async (e) => {
+    e.preventDefault()
+    if (!newMemberEmail.trim() || !currentWorkspace?.id) return
+    setIsAddingMember(true)
+    setMemberError('')
+    try {
+      if (isBackendConfigured()) {
+        await workspaceService.addMember(currentWorkspace.id, {
+          email: newMemberEmail.trim().toLowerCase(),
+          role: newMemberRole,
+        })
+        addToast(`Added ${newMemberEmail} to workspace as ${newMemberRole}`, 'success')
+        setNewMemberEmail('')
+        fetchMembers()
+      } else {
+        const fakeMember = {
+          userId: `usr-${Date.now()}`,
+          name: newMemberEmail.split('@')[0],
+          email: newMemberEmail.trim(),
+          role: newMemberRole,
+          status: 'active',
+          joinedAt: new Date().toISOString(),
+        }
+        setMembers(prev => [...prev, fakeMember])
+        addToast(`Added ${newMemberEmail} to workspace`, 'success')
+        setNewMemberEmail('')
+      }
+    } catch (err) {
+      setMemberError(err?.message || 'Failed to add member. Ensure the user account exists.')
+    } finally {
+      setIsAddingMember(false)
+    }
+  }
+
+  const handleUpdateMemberRole = async (userId, role) => {
+    if (!currentWorkspace?.id) return
+    try {
+      if (isBackendConfigured()) {
+        await workspaceService.updateMemberRole(currentWorkspace.id, userId, role)
+        addToast('Member role updated successfully', 'success')
+        fetchMembers()
+      } else {
+        setMembers(prev => prev.map(m => (m.userId === userId ? { ...m, role } : m)))
+        addToast('Member role updated', 'success')
+      }
+    } catch (err) {
+      addToast(err?.message || 'Failed to update member role', 'error')
+    }
+  }
+
+  const handleRemoveMember = async (userId) => {
+    if (!currentWorkspace?.id) return
+    try {
+      if (isBackendConfigured()) {
+        await workspaceService.removeMember(currentWorkspace.id, userId)
+        addToast('Member removed from workspace', 'success')
+        fetchMembers()
+      } else {
+        setMembers(prev => prev.filter(m => m.userId !== userId))
+        addToast('Member removed from workspace', 'success')
+      }
+    } catch (err) {
+      addToast(err?.message || 'Failed to remove member', 'error')
+    }
+  }
+
   const [emailDigest, setEmailDigest] = useState(true)
   const [inAppAlerts, setInAppAlerts] = useState(true)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
@@ -201,16 +379,28 @@ export default function SettingsPage() {
           <div className="space-y-4">
             <div>
               <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-1">
-                Active User
+                User Name (Persisted)
               </label>
-              <div className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center font-bold text-sm">
-                  {user?.name ? user.name[0] : 'U'}
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-slate-900 dark:text-white">{user?.name || 'Lead Product Manager'}</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">{user?.email || 'pm@productmind.ai'} • {user?.role || 'Lead PM'}</div>
-                </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={userName}
+                  onChange={(e) => setUserName(e.target.value)}
+                  placeholder="Your full name"
+                  className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleSaveProfile}
+                  disabled={isSavingProfile || !userName.trim()}
+                >
+                  {isSavingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+                  Save
+                </Button>
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                {user?.email || 'pm@productmind.ai'} • {user?.role || 'Lead PM'}
               </div>
             </div>
 
@@ -218,13 +408,168 @@ export default function SettingsPage() {
               <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-1">
                 Workspace Name
               </label>
-              <input
-                type="text"
-                value={workspaceName}
-                onChange={(e) => setWorkspaceName(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={workspaceName}
+                  onChange={(e) => setWorkspaceName(e.target.value)}
+                  className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleSaveWorkspace}
+                  disabled={isSavingWorkspace || !workspaceName.trim()}
+                >
+                  {isSavingWorkspace ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+                  Save
+                </Button>
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Slug: <span className="font-mono">{currentWorkspace?.slug || 'apex-saas'}</span> • Plan: {currentWorkspace?.plan || 'enterprise'}
+              </div>
             </div>
+          </div>
+        </Card>
+
+        {/* Workspace Team & Members Management */}
+        <Card className="p-6 space-y-5 md:col-span-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div className="flex items-center gap-2 text-slate-900 dark:text-white font-semibold">
+              <Users className="w-5 h-5 text-emerald-500" />
+              <span>Workspace Team Members</span>
+              <Badge variant="outline" className="text-xs ml-1 font-mono">
+                {members.length} {members.length === 1 ? 'member' : 'members'}
+              </Badge>
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              Workspace ID: <span className="font-mono">{currentWorkspace?.id || 'default'}</span>
+            </div>
+          </div>
+
+          {/* Add Member Form */}
+          <form onSubmit={handleAddMember} className="space-y-3">
+            <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
+              Add New Member
+            </label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  value={newMemberEmail}
+                  onChange={(e) => setNewMemberEmail(e.target.value)}
+                  placeholder="colleague@productmind.ai"
+                  required
+                  className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <select
+                value={newMemberRole}
+                onChange={(e) => setNewMemberRole(e.target.value)}
+                className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="member">Member</option>
+                <option value="viewer">Viewer</option>
+                <option value="admin">Admin</option>
+              </select>
+              <Button type="submit" variant="primary" disabled={isAddingMember || !newMemberEmail.trim()}>
+                {isAddingMember ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
+                Add Member
+              </Button>
+            </div>
+            {memberError && (
+              <div className="flex items-center gap-2 p-2.5 rounded-lg bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 text-xs border border-red-200 dark:border-red-900/30">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{memberError}</span>
+              </div>
+            )}
+          </form>
+
+          {/* Members Table */}
+          <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+            {isLoadingMembers ? (
+              <div className="p-8 text-center text-slate-500 dark:text-slate-400 flex items-center justify-center gap-2 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin text-primary-500" />
+                <span>Loading workspace members...</span>
+              </div>
+            ) : members.length === 0 ? (
+              <div className="p-6 text-center text-slate-500 dark:text-slate-400 text-sm">
+                No active members found in this workspace.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    <tr>
+                      <th className="py-2.5 px-4">Member</th>
+                      <th className="py-2.5 px-4">Role</th>
+                      <th className="py-2.5 px-4">Status</th>
+                      <th className="py-2.5 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {members.map((member) => {
+                      const mId = member.userId || member.user_id || member.id
+                      const mEmail = member.email || member.userEmail || ''
+                      const mName = member.name || member.userName || mEmail.split('@')[0] || 'User'
+                      const mRole = member.role || 'member'
+                      const isSelf = user?.email === mEmail || user?.id === mId
+
+                      return (
+                        <tr key={mId || mEmail} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/40 transition">
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 flex items-center justify-center font-bold text-xs uppercase">
+                                {mName[0] || 'U'}
+                              </div>
+                              <div>
+                                <div className="font-medium text-slate-900 dark:text-white flex items-center gap-1.5">
+                                  {mName}
+                                  {isSelf && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">You</Badge>
+                                  )}
+                                </div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">{mEmail}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <select
+                              value={mRole}
+                              onChange={(e) => handleUpdateMemberRole(mId, e.target.value)}
+                              disabled={isSelf}
+                              className="text-xs py-1 px-2 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
+                            >
+                              <option value="admin">Admin</option>
+                              <option value="member">Member</option>
+                              <option value="viewer">Viewer</option>
+                            </select>
+                          </td>
+                          <td className="py-3 px-4">
+                            <Badge variant={member.status === 'inactive' ? 'outline' : 'success'} className="text-[11px]">
+                              {member.status || 'active'}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            {!isSelf && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveMember(mId)}
+                                className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-1 rounded transition"
+                                title="Remove member"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </Card>
 
