@@ -8,6 +8,85 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, ''
 const AUTH_TOKEN_KEY = 'pmai_mock_auth_session'
 const ACTIVE_WORKSPACE_KEY = 'pmai_active_workspace_id'
 
+// Centralized single-flight refresh mutex
+let activeRefreshPromise = null
+
+export async function refreshAuthSession() {
+  if (activeRefreshPromise) {
+    return activeRefreshPromise
+  }
+
+  activeRefreshPromise = (async () => {
+    try {
+      if (!isBackendConfigured()) return null
+      const raw = localStorage.getItem(AUTH_TOKEN_KEY)
+      if (!raw) return null
+      const session = JSON.parse(raw)
+      const currentRefreshToken = session?.refreshToken || session?.refresh_token
+      if (!currentRefreshToken) return null
+
+      const refreshUrl = `${API_BASE_URL}/api/v1/auth/refresh`
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 15000)
+
+      const response = await fetch(refreshUrl, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refreshToken: currentRefreshToken }),
+        signal: controller.signal,
+      })
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          localStorage.removeItem(AUTH_TOKEN_KEY)
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('pmai:auth_expired', { detail: { status: response.status } }))
+          }
+        }
+        return null
+      }
+
+      const resData = await response.json()
+      const payload = resData?.data !== undefined ? resData.data : resData
+      const newAccessToken = payload.accessToken || payload.access_token || payload.token
+      const newRefreshToken = payload.refreshToken || payload.refresh_token || currentRefreshToken
+      const expiresIn = payload.expiresIn || payload.expires_in || 900
+      const user = payload.user || session.user
+
+      const updatedSession = {
+        ...session,
+        token: newAccessToken,
+        accessToken: newAccessToken,
+        access_token: newAccessToken,
+        refreshToken: newRefreshToken,
+        refresh_token: newRefreshToken,
+        user,
+        expiresAt: Date.now() + expiresIn * 1000,
+        accessTokenExpiresAt: Date.now() + expiresIn * 1000,
+        sessionExpiresAt: Date.now() + (30 * 24 * 60 * 60 * 1000),
+        refreshTokenExpiresAt: Date.now() + (30 * 24 * 60 * 60 * 1000),
+      }
+
+      localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(updatedSession))
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pmai:session_refreshed', { detail: updatedSession }))
+      }
+      return updatedSession
+    } catch (err) {
+      console.warn('Silent token refresh failed:', err)
+      return null
+    } finally {
+      activeRefreshPromise = null
+    }
+  })()
+
+  return activeRefreshPromise
+}
+
 export function isBackendConfigured() {
   return Boolean(API_BASE_URL && API_BASE_URL.trim().length > 0)
 }
@@ -131,6 +210,21 @@ export async function request(endpoint, options = {}) {
     }
 
     if (!response.ok) {
+      // Check for 401 Unauthorized to trigger single-flight token refresh
+      const isAuthEndpoint = endpoint.includes('/auth/login') ||
+                             endpoint.includes('/auth/refresh') ||
+                             endpoint.includes('/auth/register')
+      if (response.status === 401 && !options._isRetry && !isAuthEndpoint) {
+        const refreshed = await refreshAuthSession()
+        if (refreshed && (refreshed.accessToken || refreshed.token)) {
+          // Retry original request exactly once with new token
+          return request(endpoint, {
+            ...options,
+            _isRetry: true,
+          })
+        }
+      }
+
       let errorMsg = `HTTP ${response.status}: ${response.statusText}`
       if (parsed) {
         if (typeof parsed.detail === 'string') {
@@ -181,6 +275,7 @@ export const apiClient = {
   put: (endpoint, body, options) => request(endpoint, { method: 'PUT', body, ...options }),
   patch: (endpoint, body, options) => request(endpoint, { method: 'PATCH', body, ...options }),
   delete: (endpoint, options) => request(endpoint, { method: 'DELETE', ...options }),
+  refreshSession: refreshAuthSession,
   isConfigured: isBackendConfigured,
   getBaseUrl: getApiBaseUrl,
   getActiveWorkspaceId,

@@ -24,6 +24,71 @@ export function AuthProvider({ children }) {
     return session?.isDemo ?? !isBackendConfigured()
   })
 
+  const [isAuthReady, setIsAuthReady] = useState(false)
+
+  // Primary session restoration & initial proactive token refresh
+  useEffect(() => {
+    let mounted = true
+
+    async function initSession() {
+      const session = authService.getCurrentSession()
+      if (session && !session.isDemo && isBackendConfigured()) {
+        const refreshToken = session.refreshToken || session.refresh_token
+        // Proactively refresh if access token expired or expires within 3 minutes
+        const accessExpiry = session.accessTokenExpiresAt || session.expiresAt || 0
+        const isExpiringSoon = (accessExpiry - Date.now()) < 3 * 60 * 1000
+
+        if (isExpiringSoon && refreshToken) {
+          try {
+            const refreshed = await authService.refreshSession()
+            if (mounted) {
+              if (refreshed?.user) {
+                setCurrentUser(refreshed.user)
+                setIsAuthenticated(true)
+              } else if (!refreshed) {
+                // If refresh token has expired or is revoked on backend, reset session
+                setIsAuthenticated(false)
+                setCurrentUser(null)
+              }
+            }
+          } catch (err) {
+            console.warn('Initial session refresh error:', err)
+          }
+        }
+      }
+      if (mounted) {
+        setIsAuthReady(true)
+      }
+    }
+
+    initSession()
+
+    // Listen for cross-request session refresh & expiration events
+    const handleSessionRefreshed = (e) => {
+      if (e.detail?.user) {
+        setCurrentUser(e.detail.user)
+        setIsAuthenticated(true)
+      }
+    }
+    const handleAuthExpired = () => {
+      setIsAuthenticated(false)
+      setCurrentUser(null)
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pmai:session_refreshed', handleSessionRefreshed)
+      window.addEventListener('pmai:auth_expired', handleAuthExpired)
+    }
+
+    return () => {
+      mounted = false
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pmai:session_refreshed', handleSessionRefreshed)
+        window.removeEventListener('pmai:auth_expired', handleAuthExpired)
+      }
+    }
+  }, [])
+
   // Periodic session expiration check & refresh
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -32,13 +97,16 @@ export function AuthProvider({ children }) {
         setIsAuthenticated(false)
         setCurrentUser(null)
         safeRemove(AUTH_TOKEN_KEY)
-      } else if (session && !session.isDemo) {
-        // Refresh token if within 5 minutes of expiration
-        const timeLeft = (session.expiresAt || 0) - Date.now()
-        if (timeLeft > 0 && timeLeft < 5 * 60 * 1000) {
+      } else if (session && !session.isDemo && isBackendConfigured()) {
+        // Refresh token if within 5 minutes of access token expiration
+        const timeLeft = (session.accessTokenExpiresAt || session.expiresAt || 0) - Date.now()
+        if (timeLeft < 5 * 60 * 1000) {
           const refreshed = await authService.refreshSession()
           if (refreshed?.user) {
             setCurrentUser(refreshed.user)
+          } else if (!refreshed && timeLeft <= 0) {
+            setIsAuthenticated(false)
+            setCurrentUser(null)
           }
         }
       }
@@ -127,6 +195,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider
       value={{
+        isAuthReady,
         isAuthenticated,
         currentUser,
         isDemoAuth,
@@ -148,6 +217,7 @@ export function useAuth() {
   if (!context) {
     const session = authService.getCurrentSession()
     return {
+      isAuthReady: true,
       currentUser: session?.user || null,
       isAuthenticated: Boolean(session),
       isDemoAuth: session?.isDemo ?? true,

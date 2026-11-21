@@ -8,7 +8,9 @@ import { API_ENDPOINTS } from './types'
 import { initialUser } from '../../data/seedData'
 
 const AUTH_TOKEN_KEY = 'pmai_mock_auth_session'
-const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000 // 24 hours
+const ACCESS_TOKEN_EXPIRY_MS = 15 * 60 * 1000 // 15 minutes default
+const REFRESH_SESSION_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
+const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000 // Legacy backward compatibility
 
 export const authService = {
   /**
@@ -87,8 +89,10 @@ export const authService = {
         if (res.success && res.data) {
           const accessToken = res.data.accessToken || res.data.access_token || res.data.token
           const refreshToken = res.data.refreshToken || res.data.refresh_token
-          const expiresIn = res.data.expiresIn || res.data.expires_in
+          const expiresIn = res.data.expiresIn || res.data.expires_in || 900
           const user = res.data.user
+          const accessExpiresAt = Date.now() + (expiresIn * 1000)
+          const sessionExpiresAt = Date.now() + REFRESH_SESSION_EXPIRY_MS
           const session = {
             token: accessToken,
             accessToken,
@@ -98,7 +102,10 @@ export const authService = {
             user,
             rememberMe,
             createdAt: Date.now(),
-            expiresAt: Date.now() + (expiresIn ? expiresIn * 1000 : SESSION_EXPIRY_MS),
+            expiresAt: sessionExpiresAt,
+            accessTokenExpiresAt: accessExpiresAt,
+            sessionExpiresAt,
+            refreshTokenExpiresAt: sessionExpiresAt,
             isDemo: false,
           }
           localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(session))
@@ -180,13 +187,18 @@ export const authService = {
       role: 'Lead Product Architect',
       workspaceName: 'Apex Cloud Product Ops',
     }
+    const accessExpiresAt = Date.now() + ACCESS_TOKEN_EXPIRY_MS
+    const sessionExpiresAt = Date.now() + REFRESH_SESSION_EXPIRY_MS
     const session = {
       token: `mock_pm_jwt_${Date.now()}`,
       access_token: `mock_pm_jwt_${Date.now()}`,
       user: pmUser,
       rememberMe: true,
       createdAt: Date.now(),
-      expiresAt: Date.now() + SESSION_EXPIRY_MS,
+      expiresAt: sessionExpiresAt,
+      accessTokenExpiresAt: accessExpiresAt,
+      sessionExpiresAt,
+      refreshTokenExpiresAt: sessionExpiresAt,
       isDemo: true,
     }
     localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(session))
@@ -198,15 +210,16 @@ export const authService = {
   },
 
   /**
-   * Check if current session exists and is unexpired
+   * Check if current session exists and has a valid (unexpired) refresh window
    */
   getCurrentSession() {
     try {
       const raw = localStorage.getItem(AUTH_TOKEN_KEY)
       if (!raw) return null
       const session = JSON.parse(raw)
-      const expiry = typeof session.expiresAt === 'string' ? new Date(session.expiresAt).getTime() : session.expiresAt
-      if (expiry && Date.now() > expiry) {
+      const expiry = session.expiresAt || session.sessionExpiresAt || session.refreshTokenExpiresAt
+      const expiryTime = typeof expiry === 'string' ? new Date(expiry).getTime() : expiry
+      if (expiryTime && Date.now() > expiryTime) {
         localStorage.removeItem(AUTH_TOKEN_KEY)
         return null
       }
@@ -218,9 +231,23 @@ export const authService = {
   },
 
   /**
-   * Refresh session token with backend
+   * Check if access token is expired or close to expiry (within 30s)
+   */
+  isAccessTokenExpired(session = null) {
+    const s = session || this.getCurrentSession()
+    if (!s) return true
+    if (s.isDemo) return false
+    const expiry = s.accessTokenExpiresAt || s.expiresAt || 0
+    return Date.now() >= (expiry - 30000)
+  },
+
+  /**
+   * Refresh session token with backend (delegates to centralized single-flight mutex)
    */
   async refreshSession() {
+    if (typeof apiClient.refreshSession === 'function') {
+      return await apiClient.refreshSession()
+    }
     try {
       const session = this.getCurrentSession()
       const currentRefreshToken = session?.refreshToken || session?.refresh_token
@@ -233,8 +260,10 @@ export const authService = {
       if (res.success && res.data) {
         const accessToken = res.data.accessToken || res.data.access_token || res.data.token
         const refreshToken = res.data.refreshToken || res.data.refresh_token || currentRefreshToken
-        const expiresIn = res.data.expiresIn || res.data.expires_in
+        const expiresIn = res.data.expiresIn || res.data.expires_in || 900
         const user = res.data.user || session.user
+        const accessExpiresAt = Date.now() + (expiresIn * 1000)
+        const sessionExpiresAt = Date.now() + REFRESH_SESSION_EXPIRY_MS
         const updated = {
           ...session,
           token: accessToken,
@@ -243,7 +272,10 @@ export const authService = {
           refreshToken,
           refresh_token: refreshToken,
           user,
-          expiresAt: Date.now() + (expiresIn ? expiresIn * 1000 : SESSION_EXPIRY_MS),
+          expiresAt: accessExpiresAt,
+          accessTokenExpiresAt: accessExpiresAt,
+          sessionExpiresAt,
+          refreshTokenExpiresAt: sessionExpiresAt,
         }
         localStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(updated))
         return updated

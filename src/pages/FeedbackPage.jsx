@@ -32,6 +32,7 @@ import {
 import { Card, Badge, Button, Modal, DemoModeBanner, AIClassificationCard } from '../components/common'
 import { parseFeedbackCSV, generateSampleCSV, exportFeedbackToCSV } from '../services/csvService'
 import { feedbackService } from '../services/api/feedbackService'
+import { feedbackAiQueue, AI_STATUS } from '../services/api/feedbackAiQueue'
 import { isBackendConfigured } from '../services/api/apiClient'
 import { useWorkspace } from '../context/WorkspaceContext'
 import { InsightsPage } from './InsightsPage'
@@ -71,6 +72,7 @@ export function FeedbackPage() {
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [selectedSentiment, setSelectedSentiment] = useState('All')
   const [selectedPriority, setSelectedPriority] = useState('All')
+  const [selectedAiStatus, setSelectedAiStatus] = useState('All') // 'All', 'Completed', 'Analyzing', 'Pending'
   const [linkedFilter, setLinkedFilter] = useState('all') // 'all', 'linked', 'unlinked'
   const [sortBy, setSortBy] = useState('newest') // 'newest', 'oldest', 'priority'
 
@@ -88,9 +90,98 @@ export function FeedbackPage() {
   const [backendFeedback, setBackendFeedback] = useState(null)
   const [isLoadingBackendFeedback, setIsLoadingBackendFeedback] = useState(false)
 
+  const isValidObjectId = (id) => typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id)
+
+  const mapBackendItem = (item) => {
+    const rawSourceType = item.sourceType || item.source_type || 'manual'
+    const rawPriority = item.sourcePriority || item.source_priority
+    const rawCustomer = item.customerName || item.customer_name || item.customer || 'Customer'
+    const rawCompany = item.companyName || item.company_name || item.company || 'Organization'
+    const rawCreated = item.createdAt || item.created_at
+    const rawFeatureId = item.promotedFeatureId || item.promoted_feature_id || item.linked_feature_id || item.linkedFeatureId
+    const rawAnalysis = item.aiAnalysis || item.ai_analysis || item.analysis
+    const id = String(item.id || item._id)
+    const queuedStatus = feedbackAiQueue.getStatus(id)
+
+    let aiStatus = AI_STATUS.AWAITING_ANALYSIS
+    if (rawAnalysis) {
+      aiStatus = AI_STATUS.COMPLETED
+    } else if (queuedStatus && queuedStatus !== AI_STATUS.AWAITING_ANALYSIS) {
+      aiStatus = queuedStatus
+    }
+
+    return {
+      id,
+      title: item.title,
+      description: item.description || '',
+      customer: rawCustomer,
+      company: rawCompany,
+      category: item.category ? item.category.replace(/_/g, ' ') : 'Feature Requests',
+      sentiment: item.sentiment ? item.sentiment.charAt(0).toUpperCase() + item.sentiment.slice(1) : 'Neutral',
+      priority: rawPriority ? rawPriority.charAt(0).toUpperCase() + rawPriority.slice(1) : 'Medium',
+      tags: item.tags || [],
+      sourceType: rawSourceType,
+      source_type: rawSourceType,
+      date: rawCreated ? String(rawCreated).split('T')[0] : new Date().toISOString().split('T')[0],
+      linkedFeatureId: rawFeatureId || null,
+      analysis: rawAnalysis || null,
+      aiStatus,
+    }
+  }
+
+  // Subscribe to AI queue updates to refresh state reactively
+  React.useEffect(() => {
+    const unsubscribe = feedbackAiQueue.subscribe(({ feedbackId, status, data, error }) => {
+      setBackendFeedback(prev => {
+        if (!prev) return prev
+        return prev.map(item => {
+          if (item.id === feedbackId) {
+            const updated = { ...item, aiStatus: status }
+            if (status === AI_STATUS.COMPLETED && data?.analysis) {
+              updated.analysis = data.analysis
+              if (data.analysis.category) updated.category = data.analysis.category.replace(/_/g, ' ')
+              if (data.analysis.sentiment) updated.sentiment = data.analysis.sentiment
+              if (data.analysis.urgency) {
+                updated.priority = data.analysis.urgency === 'Critical' ? 'Urgent' : data.analysis.urgency
+              }
+            }
+            return updated
+          }
+          return item
+        })
+      })
+
+      setInspectingFeedbackItem(prev => {
+        if (prev && prev.id === feedbackId) {
+          const updated = { ...prev, aiStatus: status }
+          if (status === AI_STATUS.COMPLETED && data?.analysis) {
+            updated.analysis = data.analysis
+          }
+          return updated
+        }
+        return prev
+      })
+
+      if (status === AI_STATUS.COMPLETED && data?.analysis) {
+        setAiAnalysis(data.analysis)
+        setIsLoadingAnalysis(false)
+        setAnalysisError(null)
+      } else if (status === AI_STATUS.ANALYZING) {
+        setIsLoadingAnalysis(true)
+      } else if (status === AI_STATUS.RATE_LIMITED) {
+        setIsLoadingAnalysis(false)
+        setAnalysisError('AI rate limit reached (Groq free-tier). Please retry manually in a few moments.')
+      } else if (status === AI_STATUS.FAILED) {
+        setIsLoadingAnalysis(false)
+        setAnalysisError(error?.message || 'AI analysis failed')
+      }
+    })
+    return unsubscribe
+  }, [])
+
   // Fetch workspace-scoped feedback on workspace switch when backend is configured
   React.useEffect(() => {
-    if (!currentWorkspace?.id || !isBackendConfigured()) {
+    if (!isValidObjectId(currentWorkspace?.id) || !isBackendConfigured()) {
       setBackendFeedback(null)
       return
     }
@@ -99,20 +190,7 @@ export function FeedbackPage() {
     feedbackService.getFeedbackList({ workspaceId: currentWorkspace.id })
       .then((data) => {
         if (!cancelled && data?.items) {
-          const mapped = data.items.map(item => ({
-            id: String(item.id || item._id),
-            title: item.title,
-            description: item.description || '',
-            customer: item.customer_name || 'Customer',
-            company: item.company_name || 'Organization',
-            category: item.category ? item.category.replace(/_/g, ' ') : 'Feature Requests',
-            sentiment: item.sentiment ? item.sentiment.charAt(0).toUpperCase() + item.sentiment.slice(1) : 'Neutral',
-            priority: item.source_priority ? item.source_priority.charAt(0).toUpperCase() + item.source_priority.slice(1) : 'Medium',
-            tags: item.tags || [],
-            date: item.created_at ? item.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-            linkedFeatureId: item.linked_feature_id || null,
-          }))
-          setBackendFeedback(mapped)
+          setBackendFeedback(data.items.map(mapBackendItem))
         }
       })
       .catch((err) => {
@@ -139,6 +217,7 @@ export function FeedbackPage() {
   const [formCategory, setFormCategory] = useState('Feature Requests')
   const [formSentiment, setFormSentiment] = useState('Neutral')
   const [formPriority, setFormPriority] = useState('Medium')
+  const [formSourceType, setFormSourceType] = useState('manual')
   const [formTags, setFormTags] = useState([])
   const [formTagInput, setFormTagInput] = useState('')
   const [formLinkedFeatureId, setFormLinkedFeatureId] = useState('')
@@ -159,6 +238,36 @@ export function FeedbackPage() {
 
   // Filtered and Sorted list
   const activeFeedback = backendFeedback !== null ? backendFeedback : feedback
+
+  // AI Corpus & Analysis Metrics
+  const aiStats = useMemo(() => {
+    const total = activeFeedback.length
+    const completed = activeFeedback.filter(
+      f => Boolean(f.analysis) || f.aiStatus === AI_STATUS.COMPLETED
+    ).length
+    const analyzing = activeFeedback.filter(
+      f => f.aiStatus === AI_STATUS.ANALYZING || f.aiStatus === AI_STATUS.QUEUED
+    ).length
+    const rateLimited = activeFeedback.filter(
+      f => f.aiStatus === AI_STATUS.RATE_LIMITED
+    ).length
+    const pending = total - completed - analyzing
+    const supportTickets = activeFeedback.filter(
+      f => f.sourceType === 'support_ticket' || f.source_type === 'support_ticket'
+    ).length
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0
+
+    return {
+      total,
+      completed,
+      analyzing,
+      pending: Math.max(0, pending),
+      rateLimited,
+      supportTickets,
+      percent,
+    }
+  }, [activeFeedback])
+
   const filteredFeedback = useMemo(() => {
     return activeFeedback.filter(item => {
       // Text search
@@ -181,6 +290,18 @@ export function FeedbackPage() {
       // Priority filter
       if (selectedPriority !== 'All' && item.priority !== selectedPriority) return false
 
+      // AI Status filter
+      if (selectedAiStatus === 'Completed') {
+        const isDone = Boolean(item.analysis) || item.aiStatus === AI_STATUS.COMPLETED
+        if (!isDone) return false
+      } else if (selectedAiStatus === 'Analyzing') {
+        const isAnalyzing = item.aiStatus === AI_STATUS.ANALYZING || item.aiStatus === AI_STATUS.QUEUED
+        if (!isAnalyzing) return false
+      } else if (selectedAiStatus === 'Pending') {
+        const isPending = !item.analysis && item.aiStatus !== AI_STATUS.COMPLETED && item.aiStatus !== AI_STATUS.ANALYZING && item.aiStatus !== AI_STATUS.QUEUED
+        if (!isPending) return false
+      }
+
       // Linked status filter
       if (linkedFilter === 'linked' && !item.linkedFeatureId) return false
       if (linkedFilter === 'unlinked' && item.linkedFeatureId) return false
@@ -195,7 +316,7 @@ export function FeedbackPage() {
       }
       return 0
     })
-  }, [activeFeedback, searchTerm, selectedCategory, selectedSentiment, selectedPriority, linkedFilter, sortBy])
+  }, [activeFeedback, searchTerm, selectedCategory, selectedSentiment, selectedPriority, selectedAiStatus, linkedFilter, sortBy])
 
   // Pagination slicing
   const totalPages = Math.ceil(filteredFeedback.length / pageSize) || 1
@@ -210,13 +331,14 @@ export function FeedbackPage() {
     setSelectedCategory('All')
     setSelectedSentiment('All')
     setSelectedPriority('All')
+    setSelectedAiStatus('All')
     setLinkedFilter('all')
     setSortBy('newest')
     setCurrentPage(1)
   }
 
   // Active filters count
-  const hasActiveFilters = searchTerm || selectedCategory !== 'All' || selectedSentiment !== 'All' || selectedPriority !== 'All' || linkedFilter !== 'all'
+  const hasActiveFilters = searchTerm || selectedCategory !== 'All' || selectedSentiment !== 'All' || selectedPriority !== 'All' || selectedAiStatus !== 'All' || linkedFilter !== 'all'
 
   // Open Inspect and load AI Intelligence
   const handleOpenInspect = async (item) => {
@@ -241,26 +363,23 @@ export function FeedbackPage() {
     if (!inspectingFeedbackItem?.id) return
     setIsLoadingAnalysis(true)
     setAnalysisError(null)
-    try {
-      const res = await feedbackService.analyzeFeedback(inspectingFeedbackItem.id, force)
-      if (res?.analysis) {
-        setAiAnalysis(res.analysis)
-        // Also update local feedback item with new category/sentiment
-        updateFeedback(inspectingFeedbackItem.id, {
-          category: res.analysis.category,
-          sentiment: res.analysis.sentiment,
-          priority: res.analysis.urgency === 'Critical' ? 'Urgent' : res.analysis.urgency,
-          analysis: res.analysis,
-        })
-        addToast('Feedback Intelligence analysis complete!', 'success')
-      }
-    } catch (err) {
-      const msg = err?.message || 'AI analysis request failed'
-      setAnalysisError(msg)
-      addToast(msg, 'error')
-    } finally {
-      setIsLoadingAnalysis(false)
-    }
+
+    feedbackAiQueue.enqueue(inspectingFeedbackItem.id, {
+      forceReanalyze: force,
+      onSuccess: (res) => {
+        if (res?.analysis) {
+          setAiAnalysis(res.analysis)
+          addToast('Feedback Intelligence analysis complete!', 'success')
+        }
+      },
+      onError: (err, isRateLimit) => {
+        const msg = isRateLimit
+          ? 'Groq free-tier rate limit reached. Please retry manually in a few moments.'
+          : (err?.message || 'AI analysis request failed')
+        setAnalysisError(msg)
+        addToast(msg, 'error')
+      },
+    })
   }
 
   // Submit Feedback
@@ -272,7 +391,8 @@ export function FeedbackPage() {
 
     // Check duplicates if creating new
     if (!editingItem && !forceProceed) {
-      const duplicates = feedback.filter(
+      const activeList = backendFeedback !== null ? backendFeedback : feedback
+      const duplicates = activeList.filter(
         f => f.title.toLowerCase().trim() === formTitle.toLowerCase().trim()
       )
       if (duplicates.length > 0) {
@@ -282,28 +402,85 @@ export function FeedbackPage() {
     }
 
     const payload = {
-      title: formTitle,
-      description: formDescription,
+      title: formTitle.trim(),
+      description: formDescription.trim(),
       customer: formCustomer || 'Anonymous Customer',
       company: formCompany || 'Independent Account',
       category: formCategory,
       sentiment: formSentiment,
       priority: formPriority,
+      source_type: formSourceType,
+      sourceType: formSourceType,
       tags: formTags.length > 0 ? formTags : ['general'],
       linkedFeatureId: formLinkedFeatureId || null,
       workspaceId: currentWorkspace?.id,
     }
 
     if (editingItem) {
+      if (isBackendConfigured() && isValidObjectId(currentWorkspace?.id)) {
+        try {
+          await feedbackService.updateFeedback(editingItem.id, payload)
+          setBackendFeedback(prev => prev ? prev.map(f => f.id === editingItem.id ? { ...f, ...payload, sourceType: formSourceType, source_type: formSourceType } : f) : null)
+          addToast('Feedback record updated in workspace', 'success')
+        } catch (err) {
+          addToast(err?.message || 'Failed to update feedback on backend', 'error')
+          return
+        }
+      }
       updateFeedback(editingItem.id, payload)
     } else {
-      await addFeedback(payload)
+      if (isBackendConfigured() && isValidObjectId(currentWorkspace?.id)) {
+        try {
+          const created = await feedbackService.createFeedback(payload)
+          const mapped = mapBackendItem(created)
+          mapped.aiStatus = AI_STATUS.QUEUED
+          setBackendFeedback(prev => [mapped, ...(prev || [])])
+          addToast(`${formSourceType === 'support_ticket' ? 'Support ticket' : 'Customer feedback'} saved to workspace. Automatic AI analysis queued...`, 'success')
+
+          // Automatically trigger existing FeedbackIntelligenceAgent via serial queue
+          feedbackAiQueue.enqueue(mapped.id, {
+            forceReanalyze: false,
+            onSuccess: () => {
+              addToast(`AI analysis ready for "${mapped.title}"`, 'success')
+            },
+            onError: (err, isRateLimit) => {
+              if (isRateLimit) {
+                addToast('AI rate limited on Groq free-tier. Status marked as Rate Limited; retry manually when ready.', 'warning')
+              } else {
+                addToast('AI analysis encountered an issue; original record safely stored.', 'warning')
+              }
+            },
+          })
+        } catch (err) {
+          addToast(err?.message || 'Failed to create feedback on backend', 'error')
+          return
+        }
+      } else {
+        await addFeedback(payload)
+      }
     }
 
     setShowCreateModal(false)
     setEditingItem(null)
     setShowDuplicateWarning(null)
     resetForm()
+  }
+
+  const handleDeleteFeedback = async (id) => {
+    if (isBackendConfigured() && isValidObjectId(currentWorkspace?.id)) {
+      try {
+        await feedbackService.deleteFeedback(id, currentWorkspace.id)
+        setBackendFeedback(prev => prev ? prev.filter(f => f.id !== id) : null)
+        addToast('Feedback item removed from workspace', 'warning')
+      } catch (err) {
+        console.error('Backend delete failed:', err)
+        addToast(err?.message || 'Failed to delete record on backend', 'error')
+        return
+      }
+    } else {
+      setBackendFeedback(prev => prev ? prev.filter(f => f.id !== id) : null)
+    }
+    deleteFeedback(id)
   }
 
   const resetForm = () => {
@@ -314,6 +491,7 @@ export function FeedbackPage() {
     setFormCategory('Feature Requests')
     setFormSentiment('Neutral')
     setFormPriority('Medium')
+    setFormSourceType('manual')
     setFormTags([])
     setFormLinkedFeatureId('')
   }
@@ -327,6 +505,7 @@ export function FeedbackPage() {
     setFormCategory(item.category)
     setFormSentiment(item.sentiment)
     setFormPriority(item.priority)
+    setFormSourceType(item.sourceType || item.source_type || 'manual')
     setFormTags(item.tags || [])
     setFormLinkedFeatureId(item.linkedFeatureId || '')
     setShowCreateModal(true)
@@ -361,7 +540,6 @@ export function FeedbackPage() {
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     const reader = new FileReader()
     reader.onload = (event) => {
       const text = event.target?.result
@@ -379,9 +557,25 @@ export function FeedbackPage() {
     reader.readAsText(file)
   }
 
-  const confirmCSVImport = () => {
+  const confirmCSVImport = async () => {
     if (csvPreview && csvPreview.records.length > 0) {
-      importFeedbackBatch(csvPreview.records)
+      if (isBackendConfigured() && isValidObjectId(currentWorkspace?.id)) {
+        try {
+          const res = await feedbackService.batchImport(csvPreview.records, currentWorkspace.id)
+          const accepted = res?.acceptedRows ?? res?.summary?.acceptedRows ?? csvPreview.records.length
+          addToast(`Imported ${accepted} feedback records into workspace`, 'success')
+          const fresh = await feedbackService.getFeedbackList({ workspaceId: currentWorkspace.id })
+          if (fresh?.items) {
+            setBackendFeedback(fresh.items.map(mapBackendItem))
+          }
+        } catch (err) {
+          addToast(err?.message || 'CSV batch import failed on backend', 'error')
+          return
+        }
+      } else {
+        importFeedbackBatch(csvPreview.records)
+        addToast(`Imported ${csvPreview.records.length} records locally`, 'info')
+      }
       setShowCSVModal(false)
       setCsvPreview(null)
     }
@@ -462,9 +656,13 @@ export function FeedbackPage() {
           {/* Header bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-xl font-bold text-slate-900 dark:text-white">Customer Feedback Explorer</h2>
                 <Badge variant="brand">Intelligence Corpus</Badge>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>{aiStats.completed} / {aiStats.total} Analyzed by AI ({aiStats.percent}%)</span>
+                </span>
               </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Manage qualitative user sentiment, duplicate detection, smart tagging, and feature linking
@@ -513,6 +711,134 @@ export function FeedbackPage() {
             Add Feedback
           </Button>
         </div>
+      </div>
+
+      {/* Top Stat Cards: AI Analysis & Corpus Status */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+        {/* 1. Completed AI Analysis */}
+        <Card
+          className={`p-3.5 sm:p-4 border-2 transition-all cursor-pointer ${
+            selectedAiStatus === 'Completed'
+              ? 'border-emerald-500 bg-emerald-50/20 dark:bg-emerald-950/20 shadow-sm'
+              : 'border-transparent hover:border-emerald-500/40'
+          }`}
+          hover
+          onClick={() => setSelectedAiStatus(prev => prev === 'Completed' ? 'All' : 'Completed')}
+          title="Click to filter completed AI analyses"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              AI Analyzed
+            </span>
+            <Sparkles className="w-4 h-4 text-emerald-500" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+              {aiStats.completed}
+            </span>
+            <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+              ({aiStats.percent}%)
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+            {selectedAiStatus === 'Completed' ? 'Filtered: Showing Analyzed' : 'Automatic analysis complete'}
+          </p>
+        </Card>
+
+        {/* 2. Total Ingested Corpus */}
+        <Card
+          className={`p-3.5 sm:p-4 border-2 transition-all cursor-pointer ${
+            selectedAiStatus === 'All'
+              ? 'border-brand-500/40 bg-brand-50/10 dark:bg-brand-950/10 shadow-sm'
+              : 'border-transparent hover:border-brand-500/30'
+          }`}
+          hover
+          onClick={() => setSelectedAiStatus('All')}
+          title="Click to show all feedback items"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Total Corpus</span>
+            <MessageSquareText className="w-4 h-4 text-brand-500" />
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-slate-900 dark:text-white">
+              {aiStats.total}
+            </span>
+            <span className="text-[11px] font-medium text-slate-400">items</span>
+          </div>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+            {aiStats.supportTickets} support {aiStats.supportTickets === 1 ? 'ticket' : 'tickets'} included
+          </p>
+        </Card>
+
+        {/* 3. In-Flight / In Queue */}
+        <Card
+          className={`p-3.5 sm:p-4 border-2 transition-all cursor-pointer ${
+            selectedAiStatus === 'Analyzing'
+              ? 'border-brand-500 bg-brand-50/20 dark:bg-brand-950/20 shadow-sm'
+              : 'border-transparent hover:border-brand-500/40'
+          }`}
+          hover
+          onClick={() => setSelectedAiStatus(prev => prev === 'Analyzing' ? 'All' : 'Analyzing')}
+          title="Click to filter currently analyzing or queued items"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-brand-700 dark:text-brand-400 flex items-center gap-1">
+              <Brain className="w-3.5 h-3.5" />
+              In-Flight AI
+            </span>
+            {aiStats.analyzing > 0 ? (
+              <Loader2 className="w-4 h-4 text-brand-500 animate-spin" />
+            ) : (
+              <Badge variant="outline" className="text-[9px] px-1 py-0">Idle</Badge>
+            )}
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-brand-600 dark:text-brand-400">
+              {aiStats.analyzing}
+            </span>
+            <span className="text-[11px] font-medium text-slate-400">active</span>
+          </div>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+            {aiStats.analyzing > 0 ? 'Analyzing in Groq serial queue' : 'Queue idle'}
+          </p>
+        </Card>
+
+        {/* 4. Awaiting Analysis */}
+        <Card
+          className={`p-3.5 sm:p-4 border-2 transition-all cursor-pointer ${
+            selectedAiStatus === 'Pending'
+              ? 'border-amber-500 bg-amber-50/20 dark:bg-amber-950/20 shadow-sm'
+              : 'border-transparent hover:border-amber-500/40'
+          }`}
+          hover
+          onClick={() => setSelectedAiStatus(prev => prev === 'Pending' ? 'All' : 'Pending')}
+          title="Click to filter items awaiting analysis"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Awaiting Analysis
+            </span>
+            {aiStats.rateLimited > 0 ? (
+              <Badge variant="warning" className="text-[9px] px-1.5 py-0">
+                {aiStats.rateLimited} Rate-limited
+              </Badge>
+            ) : (
+              <span className="text-[10px] text-slate-400">Ready</span>
+            )}
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-amber-600 dark:text-amber-400">
+              {aiStats.pending}
+            </span>
+            <span className="text-[11px] font-medium text-slate-400">pending</span>
+          </div>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+            {selectedAiStatus === 'Pending' ? 'Filtered: Showing Pending' : 'Ready for Groq analysis'}
+          </p>
+        </Card>
       </div>
 
       {/* Filter and Search Bar */}
@@ -574,6 +900,21 @@ export function FeedbackPage() {
               {priorities.map(p => (
                 <option key={p} value={p}>Priority: {p}</option>
               ))}
+            </select>
+
+            {/* AI Analysis Status Dropdown */}
+            <select
+              value={selectedAiStatus}
+              onChange={e => {
+                setSelectedAiStatus(e.target.value)
+                setCurrentPage(1)
+              }}
+              className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none"
+            >
+              <option value="All">AI: All Statuses</option>
+              <option value="Completed">AI: Analyzed ({aiStats.completed})</option>
+              <option value="Analyzing">AI: In-Flight ({aiStats.analyzing})</option>
+              <option value="Pending">AI: Awaiting ({aiStats.pending})</option>
             </select>
 
             {/* View Mode Toggle */}
@@ -687,6 +1028,34 @@ export function FeedbackPage() {
                       </td>
                       <td className="py-3 px-4 max-w-sm">
                         <div className="flex flex-col">
+                          <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                            {item.sourceType === 'support_ticket' || item.source_type === 'support_ticket' ? (
+                              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                                Support Ticket
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                                Feedback
+                              </span>
+                            )}
+                            {item.aiStatus && item.aiStatus !== 'Awaiting Analysis' && (
+                              <span
+                                className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                  item.aiStatus === 'Completed'
+                                    ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+                                    : item.aiStatus === 'Analyzing'
+                                    ? 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-800 animate-pulse'
+                                    : item.aiStatus === 'Queued'
+                                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800'
+                                    : item.aiStatus === 'Rate Limited'
+                                    ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'
+                                    : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800'
+                                }`}
+                              >
+                                {item.aiStatus === 'Analyzing' ? 'AI Analyzing...' : item.aiStatus === 'Rate Limited' ? 'AI Rate Limited' : item.aiStatus}
+                              </span>
+                            )}
+                          </div>
                           <button
                             onClick={() => handleOpenInspect(item)}
                             className="font-bold text-slate-900 dark:text-white line-clamp-1 text-left hover:text-brand-600 dark:hover:text-brand-400 cursor-pointer"
@@ -758,7 +1127,7 @@ export function FeedbackPage() {
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => deleteFeedback(item.id)}
+                            onClick={() => handleDeleteFeedback(item.id)}
                             className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800"
                             title="Delete Feedback"
                           >
@@ -782,12 +1151,42 @@ export function FeedbackPage() {
               <Card key={item.id} className="p-4 flex flex-col justify-between" hover>
                 <div>
                   <div className="flex items-start justify-between gap-2">
-                    <button
-                      onClick={() => handleOpenInspect(item)}
-                      className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1 text-left hover:text-brand-600 dark:hover:text-brand-400 cursor-pointer"
-                    >
-                      {item.title}
-                    </button>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                        {item.sourceType === 'support_ticket' || item.source_type === 'support_ticket' ? (
+                          <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                            Support Ticket
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                            Feedback
+                          </span>
+                        )}
+                        {item.aiStatus && item.aiStatus !== 'Awaiting Analysis' && (
+                          <span
+                            className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                              item.aiStatus === 'Completed'
+                                ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+                                : item.aiStatus === 'Analyzing'
+                                ? 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-800 animate-pulse'
+                                : item.aiStatus === 'Queued'
+                                ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800'
+                                : item.aiStatus === 'Rate Limited'
+                                ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'
+                                : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800'
+                            }`}
+                          >
+                            {item.aiStatus === 'Analyzing' ? 'AI Analyzing...' : item.aiStatus === 'Rate Limited' ? 'AI Rate Limited' : item.aiStatus}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleOpenInspect(item)}
+                        className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1 text-left hover:text-brand-600 dark:hover:text-brand-400 cursor-pointer"
+                      >
+                        {item.title}
+                      </button>
+                    </div>
                     <Badge variant={item.priority === 'Urgent' ? 'danger' : item.priority === 'High' ? 'warning' : 'default'}>
                       {item.priority}
                     </Badge>
@@ -810,7 +1209,7 @@ export function FeedbackPage() {
                   <span className="text-slate-400">{item.customer} • {item.company}</span>
                   <div className="flex items-center gap-2">
                     <button onClick={() => handleEdit(item)} className="text-brand-600 dark:text-brand-400 hover:underline">Edit</button>
-                    <button onClick={() => deleteFeedback(item.id)} className="text-rose-500 hover:underline">Delete</button>
+                    <button onClick={() => handleDeleteFeedback(item.id)} className="text-rose-500 hover:underline">Delete</button>
                   </div>
                 </div>
               </Card>
@@ -967,21 +1366,35 @@ export function FeedbackPage() {
             </div>
           </div>
 
-          {/* Link to Feature */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Associated Feature
-            </label>
-            <select
-              value={formLinkedFeatureId}
-              onChange={e => setFormLinkedFeatureId(e.target.value)}
-              className="w-full px-2.5 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
-            >
-              <option value="">None (Unlinked)</option>
-              {features.map(f => (
-                <option key={f.id} value={f.id}>{f.name} (Score: {f.score.toFixed(2)})</option>
-              ))}
-            </select>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Source Type
+              </label>
+              <select
+                value={formSourceType}
+                onChange={e => setFormSourceType(e.target.value)}
+                className="w-full px-2.5 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              >
+                <option value="manual">Customer Feedback (Manual)</option>
+                <option value="support_ticket">Support Ticket</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Associated Feature
+              </label>
+              <select
+                value={formLinkedFeatureId}
+                onChange={e => setFormLinkedFeatureId(e.target.value)}
+                className="w-full px-2.5 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              >
+                <option value="">None (Unlinked)</option>
+                {features.map(f => (
+                  <option key={f.id} value={f.id}>{f.name} (Score: {f.score.toFixed(2)})</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Smart Tags */}
@@ -1194,16 +1607,38 @@ export function FeedbackPage() {
 
             {/* AI Classification Card Component */}
             <AIClassificationCard
-              category={aiAnalysis?.category || inspectingFeedbackItem.category}
-              sentiment={aiAnalysis?.sentiment || inspectingFeedbackItem.sentiment}
-              themes={aiAnalysis?.secondary_tags || aiAnalysis?.subthemes || inspectingFeedbackItem.tags || []}
-              confidence={aiAnalysis?.confidence ?? 0.92}
-              status={isLoadingAnalysis ? 'processing' : aiAnalysis ? 'completed' : 'pending'}
+              category={aiAnalysis?.category || inspectingFeedbackItem.category || '—'}
+              sentiment={aiAnalysis?.sentiment || inspectingFeedbackItem.sentiment || '—'}
+              sentimentExplanation={aiAnalysis?.sentiment_explanation || null}
+              mainTheme={aiAnalysis?.main_theme || null}
+              themes={aiAnalysis ? (aiAnalysis.secondary_tags || aiAnalysis.subthemes || []) : []}
+              confidence={aiAnalysis?.confidence ?? null}
+              status={
+                isLoadingAnalysis
+                  ? 'Analyzing'
+                  : inspectingFeedbackItem.aiStatus === 'Rate Limited'
+                  ? 'Rate Limited'
+                  : inspectingFeedbackItem.aiStatus === 'Queued'
+                  ? 'Queued'
+                  : aiAnalysis
+                  ? 'Completed'
+                  : (inspectingFeedbackItem.aiStatus || 'Awaiting Analysis')
+              }
+              onRetry={() => handleRunAIAnalysis(true)}
             />
 
             {/* Grounded AI Analysis Findings */}
             {aiAnalysis && (
               <div className="space-y-3">
+                {/* AI Executive Summary */}
+                {aiAnalysis.summary && (
+                  <div className="p-3 rounded-xl bg-brand-50/40 dark:bg-brand-950/20 border border-brand-200/50 dark:border-brand-900/50 text-xs">
+                    <span className="text-[10px] font-bold uppercase tracking-wider block text-brand-700 dark:text-brand-300 mb-1">
+                      AI Executive Summary
+                    </span>
+                    <p className="text-slate-700 dark:text-slate-300 leading-relaxed">{aiAnalysis.summary}</p>
+                  </div>
+                )}
                 {/* Pain Point & Suggested Action */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200">

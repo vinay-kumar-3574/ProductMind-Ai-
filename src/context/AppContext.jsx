@@ -94,21 +94,24 @@ export function AppProvider({ children }) {
       category: item.category || 'Feature Requests',
       sentiment: item.sentiment || 'Neutral',
       priority: item.priority || 'Medium',
+      sourceType: item.sourceType || item.source_type || 'manual',
       tags: item.tags || ['feedback'],
       date: item.date || new Date().toISOString().split('T')[0],
       linkedFeatureId: item.linkedFeatureId || null,
     }
 
-    if (isBackendConfigured()) {
+    if (isBackendConfigured() && typeof item.workspaceId === 'string' && /^[0-9a-fA-F]{24}$/.test(item.workspaceId)) {
       try {
         const created = await feedbackService.createFeedback(item)
         if (created?.id) {
           newItem.id = String(created.id)
-          if (created.category) newItem.category = created.category
+          if (created.category) newItem.category = created.category.replace(/_/g, ' ')
           if (created.sentiment) newItem.sentiment = created.sentiment
+          if (created.source_type) newItem.sourceType = created.source_type
         }
       } catch (err) {
-        console.warn('Backend feedback creation fallback to local state:', err)
+        console.warn('Backend feedback creation error:', err)
+        throw err
       }
     }
 

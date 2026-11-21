@@ -111,11 +111,13 @@ export function EmptyState({
  * AI Classification & Theme Presentation Component (Requirement 6)
  */
 export function AIClassificationCard({
-  category = 'Feature Requests',
-  sentiment = 'Neutral',
+  category = '—',
+  sentiment = '—',
+  sentimentExplanation = null,
+  mainTheme = null,
   themes = [],
-  confidence = 0.92,
-  status = 'completed',
+  confidence = null,
+  status = 'Awaiting Analysis',
   onRetry,
   className = '',
 }) {
@@ -125,6 +127,30 @@ export function AIClassificationCard({
     Negative: 'text-rose-700 bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800',
   }
 
+  const getStatusBadgeClass = (st) => {
+    const s = String(st).toLowerCase()
+    if (s.includes('complete')) {
+      return 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+    }
+    if (s.includes('analyz') || s.includes('process')) {
+      return 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-800 animate-pulse'
+    }
+    if (s.includes('queue')) {
+      return 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800'
+    }
+    if (s.includes('rate limit')) {
+      return 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'
+    }
+    if (s.includes('fail')) {
+      return 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800'
+    }
+    return 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+  }
+
+  const hasConfidence = confidence !== null && confidence !== undefined && !isNaN(confidence)
+  const confidencePercent = hasConfidence ? Math.round(confidence * 100) : 0
+  const isRetryable = (status === 'failed' || status === 'Failed' || status === 'Rate Limited' || String(status).toLowerCase().includes('rate limit')) && onRetry
+
   return (
     <div className={`p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-navy-900 ${className}`}>
       <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-3">
@@ -132,7 +158,7 @@ export function AIClassificationCard({
           <Sparkles className="w-4 h-4 text-brand-500" />
           <span className="text-xs font-bold text-slate-900 dark:text-white">Classification & Themes</span>
         </div>
-        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
+        <span className={`text-[10px] font-mono font-medium px-2 py-0.5 rounded-full ${getStatusBadgeClass(status)}`}>
           Status: {status}
         </span>
       </div>
@@ -141,32 +167,66 @@ export function AIClassificationCard({
         <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-navy-950/60 border border-slate-100 dark:border-slate-800">
           <span className="text-[10px] text-slate-400 block font-medium">Category</span>
           <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate block mt-0.5">
-            {category}
+            {category || '—'}
           </span>
         </div>
 
         <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-navy-950/60 border border-slate-100 dark:border-slate-800">
           <span className="text-[10px] text-slate-400 block font-medium">Sentiment</span>
-          <span className={`inline-block mt-0.5 text-xs font-bold px-2 py-0.5 rounded-md border ${sentimentColors[sentiment] || sentimentColors.Neutral}`}>
-            {sentiment}
-          </span>
+          {sentiment && sentiment !== '—' ? (
+            <span className={`inline-block mt-0.5 text-xs font-bold px-2 py-0.5 rounded-md border ${sentimentColors[sentiment] || sentimentColors.Neutral}`}>
+              {sentiment}
+            </span>
+          ) : (
+            <span className="inline-block mt-0.5 text-xs font-medium text-slate-400">
+              —
+            </span>
+          )}
         </div>
 
         <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-navy-950/60 border border-slate-100 dark:border-slate-800 col-span-2 sm:col-span-1">
           <span className="text-[10px] text-slate-400 block font-medium">Model Confidence</span>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-xs font-bold text-slate-900 dark:text-white font-mono">
-              {Math.round(confidence * 100)}%
-            </span>
-            <div className="flex-1 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-              <div
-                className="h-full bg-brand-500 rounded-full"
-                style={{ width: `${Math.round(confidence * 100)}%` }}
-              />
+          {hasConfidence ? (
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-xs font-bold text-slate-900 dark:text-white font-mono">
+                {confidencePercent}%
+              </span>
+              <div className="flex-1 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                <div
+                  className="h-full bg-brand-500 rounded-full"
+                  style={{ width: `${confidencePercent}%` }}
+                />
+              </div>
             </div>
-          </div>
+          ) : (
+            <span className="text-xs text-slate-400 font-medium block mt-0.5">
+              Awaiting Analysis
+            </span>
+          )}
         </div>
       </div>
+
+      {mainTheme && (
+        <div className="p-2.5 mb-3 rounded-lg bg-slate-50 dark:bg-navy-950/60 border border-slate-100 dark:border-slate-800 text-xs">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-0.5">
+            Core Theme
+          </span>
+          <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
+            {mainTheme}
+          </span>
+        </div>
+      )}
+
+      {sentimentExplanation && (
+        <div className="p-2.5 mb-3 rounded-lg bg-slate-50 dark:bg-navy-950/60 border border-slate-100 dark:border-slate-800 text-xs">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-0.5">
+            Sentiment Rationale
+          </span>
+          <p className="text-xs text-slate-600 dark:text-slate-400 italic">
+            &ldquo;{sentimentExplanation}&rdquo;
+          </p>
+        </div>
+      )}
 
       {themes.length > 0 && (
         <div>
@@ -186,9 +246,11 @@ export function AIClassificationCard({
         </div>
       )}
 
-      {status === 'failed' && onRetry && (
+      {isRetryable && (
         <div className="mt-3 pt-3 border-t border-rose-100 dark:border-rose-950 flex items-center justify-between">
-          <span className="text-xs text-rose-600">Classification failed</span>
+          <span className="text-xs text-rose-600 dark:text-rose-400 font-medium">
+            {status === 'Rate Limited' ? 'AI rate limited (Groq free-tier)' : 'Classification failed'}
+          </span>
           <Button variant="danger" size="xs" icon={RefreshCw} onClick={onRetry}>
             Retry Analysis
           </Button>

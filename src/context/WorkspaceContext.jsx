@@ -15,6 +15,7 @@ const DEFAULT_DEMO_WORKSPACE = {
 export function WorkspaceProvider({ children }) {
   const auth = useAuth()
   const isAuthenticated = auth?.isAuthenticated ?? false
+  const isAuthReady = auth?.isAuthReady ?? true
   const currentUser = auth?.currentUser ?? null
   const [workspaces, setWorkspaces] = useState([])
   const [currentWorkspace, setCurrentWorkspace] = useState(null)
@@ -22,6 +23,10 @@ export function WorkspaceProvider({ children }) {
   const [workspaceError, setWorkspaceError] = useState(null)
 
   const fetchWorkspaces = useCallback(async () => {
+    if (!isAuthReady) {
+      return
+    }
+
     if (!isAuthenticated) {
       setWorkspaces([])
       setCurrentWorkspace(null)
@@ -71,7 +76,7 @@ export function WorkspaceProvider({ children }) {
     } finally {
       setIsLoadingWorkspaces(false)
     }
-  }, [isAuthenticated])
+  }, [isAuthReady, isAuthenticated])
 
   useEffect(() => {
     fetchWorkspaces()

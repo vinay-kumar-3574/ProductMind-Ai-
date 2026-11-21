@@ -96,6 +96,8 @@ class FeedbackItemResponse(BaseModel):
     feature_group_id: Optional[str] = Field(default=None, alias="featureGroupId")
     promoted_feature_id: Optional[str] = Field(default=None, alias="promotedFeatureId")
     processing_status: FeedbackProcessingStatus = Field(alias="processingStatus")
+    ai_analysis: Optional[Dict[str, Any]] = Field(default=None, alias="aiAnalysis")
+    analyzed_at: Optional[datetime] = Field(default=None, alias="analyzedAt")
     created_at: Optional[datetime] = Field(default=None, alias="createdAt")
 
 

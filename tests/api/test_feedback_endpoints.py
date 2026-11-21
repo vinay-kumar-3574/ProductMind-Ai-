@@ -139,6 +139,26 @@ def test_create_feedback_rejects_feature_from_another_workspace(api_state):
     api_state["feedback_repo"].create.assert_not_awaited()
 
 
+def test_create_feedback_accepts_support_ticket_source_type(api_state):
+    ticket_feedback = make_feedback(source_type=FeedbackSourceType.SUPPORT_TICKET)
+    api_state["feedback_repo"].find_by_external_id.return_value = None
+    api_state["feedback_repo"].create.return_value = ticket_feedback
+
+    response = client.post(
+        f"/api/v1/feedback?workspaceId={WORKSPACE_ID}",
+        json={
+            "title": "Payment gateway timeout on checkout",
+            "description": "Customer unable to pay using Amex credit card",
+            "sourceType": "support_ticket",
+            "externalId": "ticket-001",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["sourceType"] == "support_ticket"
+    api_state["feedback_repo"].create.assert_awaited_once()
+
+
 def test_create_feedback_returns_existing_item_for_idempotent_replay(api_state):
     existing = make_feedback()
     api_state["feedback_repo"].find_by_external_id.return_value = existing
@@ -456,3 +476,61 @@ def test_list_feedback_requires_workspace_access(api_state):
 
     assert response.status_code == 404
     api_state["feedback_repo"].find_page.assert_not_awaited()
+
+
+def test_delete_feedback_success(api_state):
+    item = make_feedback()
+    api_state["feedback_repo"].find_by_id.return_value = item
+    api_state["feedback_repo"].delete.return_value = True
+
+    response = client.delete(f"/api/v1/feedback/{FEEDBACK_ID}?workspaceId={WORKSPACE_ID}")
+
+    assert response.status_code == 204
+    api_state["feedback_repo"].delete.assert_awaited_once_with(FEEDBACK_ID, workspace_id=WORKSPACE_ID)
+    api_state["audit_repo"].create.assert_awaited_once()
+
+
+def test_delete_feedback_rejects_cross_workspace_mismatch(api_state):
+    other_workspace_id = ObjectId("660011223344556677889999")
+    item = make_feedback(workspace_id=other_workspace_id)
+    api_state["feedback_repo"].find_by_id.return_value = item
+
+    response = client.delete(f"/api/v1/feedback/{FEEDBACK_ID}?workspaceId={WORKSPACE_ID}")
+
+    assert response.status_code == 403
+    api_state["feedback_repo"].delete.assert_not_awaited()
+
+
+def test_delete_feedback_not_found(api_state):
+    api_state["feedback_repo"].find_by_id.return_value = None
+
+    response = client.delete(f"/api/v1/feedback/{FEEDBACK_ID}?workspaceId={WORKSPACE_ID}")
+
+    assert response.status_code == 404
+    api_state["feedback_repo"].delete.assert_not_awaited()
+
+
+def test_list_feedback_includes_cached_ai_analysis(api_state):
+    item = make_feedback()
+    item.ai_analysis = {
+        "category": "performance",
+        "sentiment": "negative",
+        "confidence": 0.94,
+        "main_theme": "Slow report generation",
+        "extracted_themes": ["export", "speed"],
+        "urgency_score": 4,
+    }
+    item.analyzed_at = datetime(2026, 11, 21, 12, 0, 0, tzinfo=timezone.utc)
+    api_state["feedback_repo"].find_page.return_value = ([item], 1)
+
+    response = client.get(f"/api/v1/feedback?workspaceId={WORKSPACE_ID}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    returned_item = data["items"][0]
+    assert returned_item["aiAnalysis"] is not None
+    assert returned_item["aiAnalysis"]["main_theme"] == "Slow report generation"
+    assert returned_item["aiAnalysis"]["confidence"] == 0.94
+    assert returned_item["analyzedAt"] is not None
+

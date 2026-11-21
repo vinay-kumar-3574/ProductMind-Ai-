@@ -43,6 +43,8 @@ export const API_ENDPOINTS = {
     LIST: '/api/v1/feedback',
     CREATE: '/api/v1/feedback',
     DETAIL: (id) => `/api/v1/feedback/${id}`,
+    UPDATE: (id) => `/api/v1/feedback/${id}`,
+    DELETE: (id) => `/api/v1/feedback/${id}`,
     BATCH_IMPORT: '/api/v1/feedback/batch',
     BATCH_STATUS: (batchId) => `/api/v1/feedback/batch/${batchId}`,
   },

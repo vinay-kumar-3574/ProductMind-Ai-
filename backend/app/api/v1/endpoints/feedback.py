@@ -95,6 +95,8 @@ def _feedback_response(item: FeedbackItem) -> FeedbackItemResponse:
         feature_group_id=str(item.feature_group_id) if item.feature_group_id else None,
         promoted_feature_id=str(item.promoted_feature_id) if item.promoted_feature_id else None,
         processing_status=item.processing_status,
+        ai_analysis=item.ai_analysis,
+        analyzed_at=item.analyzed_at,
         created_at=item.created_at,
     )
 
@@ -335,10 +337,10 @@ async def create_feedback(
         workspace_repo,
         membership_repo,
     )
-    if payload.source_type != FeedbackSourceType.MANUAL:
+    if payload.source_type not in (FeedbackSourceType.MANUAL, FeedbackSourceType.SUPPORT_TICKET):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Manual feedback must use sourceType 'manual'",
+            detail="Single feedback endpoint only accepts 'manual' or 'support_ticket' source types",
         )
 
     key = idempotency_key.strip() if idempotency_key else None
@@ -761,3 +763,53 @@ async def get_feedback(
         membership_repo,
     )
     return _feedback_response(item)
+
+
+@router.delete(
+    "/{feedback_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete feedback",
+)
+async def delete_feedback(
+    feedback_id: str,
+    workspace_id: Optional[str] = Query(default=None, alias="workspaceId"),
+    current_user: User = Depends(get_current_user),
+    workspace_repo: WorkspaceRepository = Depends(get_workspace_repository),
+    membership_repo: WorkspaceMembershipRepository = Depends(get_workspace_membership_repository),
+    feedback_repo: FeedbackRepository = Depends(get_feedback_repository),
+    audit_repo: AuditLogRepository = Depends(get_audit_log_repository),
+):
+    if not ObjectId.is_valid(feedback_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found")
+    item = await feedback_repo.find_by_id(feedback_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found")
+
+    # If workspace_id was passed, verify it matches item's workspace
+    if workspace_id and str(item.workspace_id) != workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Feedback does not belong to the specified workspace",
+        )
+
+    # Verify user has access to item's workspace
+    workspace = await _load_workspace(
+        str(item.workspace_id),
+        current_user,
+        workspace_repo,
+        membership_repo,
+    )
+
+    deleted = await feedback_repo.delete(item.id, workspace_id=workspace.id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback not found")
+
+    await _record_feedback_audit(
+        audit_repo,
+        workspace.id,
+        current_user,
+        str(item.id),
+        f"Feedback item '{item.title}' deleted",
+        action=AuditAction.DELETED,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
