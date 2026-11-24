@@ -74,10 +74,14 @@ def _extract_retry_wait(exc: Exception, attempt: int) -> float:
     exc_str = str(exc).lower()
     if "max completion tokens reached" in exc_str:
         return min(6.0 * attempt + 2.0, 20.0)
-    match = re.search(r"try again in ([0-9\.]+)s", exc_str, re.IGNORECASE)
-    if match:
+    # Check for "try again in XmYs" or "try again in Xs" or "in X.XXs"
+    m_min = re.search(r"try again in (?:(\d+)m)?([0-9\.]+)s", exc_str, re.IGNORECASE)
+    if m_min:
         try:
-            return min(max(float(match.group(1)) + 1.0, 1.0), 45.0)
+            mins = float(m_min.group(1)) if m_min.group(1) else 0.0
+            secs = float(m_min.group(2))
+            total_wait = mins * 60.0 + secs
+            return min(max(total_wait + 1.0, 1.0), 45.0)
         except (ValueError, TypeError):
             pass
     resp = getattr(exc, "response", None)
@@ -88,7 +92,7 @@ def _extract_retry_wait(exc: Exception, attempt: int) -> float:
                 return min(max(float(retry_after) + 1.0, 1.0), 45.0)
             except (ValueError, TypeError):
                 pass
-    return min(float(attempt) * 10.0, 30.0)
+    return min(float(attempt) * 8.0 + 2.0, 30.0)
 
 
 class GroqProvider(BaseLLMProvider):
@@ -417,14 +421,28 @@ class GroqProvider(BaseLLMProvider):
         # Remove <think>...</think> blocks
         json_text = re.sub(r"<think>[\s\S]*?</think>", "", json_text).strip()
 
+        # If model output was truncated (e.g. hit token limit or broken string), check if ending is incomplete
         try:
             parsed_dict = json.loads(json_text)
         except json.JSONDecodeError as jde:
-            raise AISchemaValidationException(
-                f"Raw fallback: could not parse JSON from model response for {schema.__name__}: {jde}",
-                provider=self.provider_name,
-                original_exception=jde,
-            )
+            # Check if JSON can be extracted from outermost braces
+            brace_start = json_text.find("{")
+            brace_end = json_text.rfind("}")
+            if brace_start != -1 and brace_end > brace_start:
+                try:
+                    parsed_dict = json.loads(json_text[brace_start:brace_end + 1])
+                except json.JSONDecodeError:
+                    raise AISchemaValidationException(
+                        f"Raw fallback: model generated malformed or truncated JSON for {schema.__name__}: {jde}",
+                        provider=self.provider_name,
+                        original_exception=jde,
+                    )
+            else:
+                raise AISchemaValidationException(
+                    f"Raw fallback: could not parse JSON from model response for {schema.__name__}: {jde}",
+                    provider=self.provider_name,
+                    original_exception=jde,
+                )
 
         try:
             return schema(**parsed_dict)

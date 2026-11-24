@@ -5,7 +5,7 @@ feature groups, inspecting individual feature groups, and detecting duplicates.
 """
 
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.ai.agents.feature_intelligence import (
@@ -16,6 +16,8 @@ from app.ai.agents.feature_intelligence import (
     FeatureGroupResult,
     DuplicateDetectionRequest,
     DuplicateDetectionResponse,
+    MergeFeatureGroupsRequest,
+    MergeFeatureGroupsResponse,
 )
 from app.ai.exceptions import (
     AIServiceException,
@@ -173,6 +175,64 @@ async def get_feature_group(
         workspace_id=workspace_id,
         user=current_user,
     )
+
+
+@router.get(
+    "/groups/{group_id}/feedback",
+    status_code=status.HTTP_200_OK,
+    summary="Get Feature Group Feedback Records",
+    description="Retrieves the detailed feedback records linked to a consolidated feature group.",
+    response_model=List[Dict[str, Any]],
+)
+async def get_feature_group_feedback(
+    group_id: str,
+    workspace_id: str = Query(..., description="Associated workspace ID"),
+    current_user: User = Depends(get_current_user),
+    service: FeatureIntelligenceService = Depends(get_feature_intelligence_service),
+) -> List[Dict[str, Any]]:
+    """Retrieves member feedback records for the given feature group."""
+    return await service.get_feature_group_feedback_items(
+        group_id=group_id,
+        workspace_id=workspace_id,
+        user=current_user,
+    )
+
+
+@router.post(
+    "/merge",
+    status_code=status.HTTP_200_OK,
+    summary="Merge Feature Groups",
+    description="Merges a source feature group into a destination feature group, repointing all associated feedback items.",
+    response_model=MergeFeatureGroupsResponse,
+)
+async def merge_feature_groups(
+    payload: MergeFeatureGroupsRequest,
+    current_user: User = Depends(get_current_user),
+    service: FeatureIntelligenceService = Depends(get_feature_intelligence_service),
+) -> MergeFeatureGroupsResponse:
+    """
+    Merges two feature groups:
+    - Enforces workspace scoping.
+    - Prevents self-merging and cross-workspace leakage.
+    - Repoints all underlying feedback items to destination.
+    - Recalculates demand counts, customer deduplication, and sentiment distribution.
+    - Marks source group as merged.
+    """
+    try:
+        return await service.merge_feature_groups(
+            workspace_id=payload.workspace_id,
+            source_group_id=payload.source_group_id,
+            target_group_id=payload.target_group_id,
+            user=current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error during feature group merge: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred during feature group merge: {exc}",
+        )
 
 
 @router.post(

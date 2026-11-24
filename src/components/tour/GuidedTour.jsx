@@ -31,18 +31,12 @@ export function GuidedTour() {
     },
     {
       title: '3. Algorithmic Feature Prioritization',
-      description: 'Features are ranked using our exact formula: (0.35 × Impact) + (0.30 × Urgency) + (0.20 × Demand) + (0.15 × Business Value). No more subjective opinions.',
+      description: 'Features are ranked using our Automated AI 6-Factor Prioritization Engine across Demand, Urgency, Business Impact, Strategic Alignment, Sentiment, and Usage Analytics.',
       targetPath: '/prioritization',
       highlight: 'Priority Score Matrix',
     },
     {
-      title: '4. What-If Scenario Simulator',
-      description: 'Test hypothetical resource trade-offs with interactive sliders and compare before-and-after ranking shifts without overwriting original feature scores.',
-      targetPath: '/prioritization?tab=simulator',
-      highlight: 'What-If Comparison Sandbox',
-    },
-    {
-      title: '5. Complete 13-Section PRD Generator',
+      title: '4. Complete 13-Section PRD Generator',
       description: 'Generate production-grade product requirement specifications with user stories, acceptance criteria, and risks ready for engineering handoff.',
       targetPath: '/prd-generator',
       highlight: 'PRD Specifications Studio',

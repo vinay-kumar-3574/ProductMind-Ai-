@@ -303,8 +303,8 @@ ${details}
 
     return `### Top Priority Feature Recommendations
 
-Based on the exact formula:
-$$\\text{Priority Score} = (0.35 \\times \\text{Impact}) + (0.30 \\times \\text{Urgency}) + (0.20 \\times \\text{Demand}) + (0.15 \\times \\text{Value})$$
+Based on the Automated AI 6-Factor Prioritization Engine:
+$$\\text{Composite} = (0.25 \\times \\text{Demand}) + (0.20 \\times \\text{Urgency}) + (0.20 \\times \\text{Impact}) + (0.15 \\times \\text{Alignment}) + (0.10 \\times \\text{Sentiment}) + (0.10 \\times \\text{Usage})$$
 
 Here are your highest-ranked initiatives:
 
@@ -376,19 +376,19 @@ Negative sentiment is confined strictly to Performance (table render speed) and 
 
   // 7. Explain feature scores
   if (query.includes('formula') || query.includes('score') || query.includes('weights')) {
-    return `### Feature Prioritization Formula Explained
+    return `### Feature Prioritization Engine Explained
 
-Product Mind AI uses a weighted multi-factor scoring model normalized on a 1–10 scale:
+Product Mind AI uses an Automated AI 6-Factor Prioritization Model normalized on a 0–100 composite scale:
 
-$$\\text{Priority Score} = (0.35 \\times \\text{Impact}) + (0.30 \\times \\text{Urgency}) + (0.20 \\times \\text{Demand}) + (0.15 \\times \\text{Business Value})$$
+$$\\text{Composite} = 0.25 \\times \\text{Demand} + 0.20 \\times \\text{Urgency} + 0.20 \\times \\text{Business Impact} + 0.15 \\times \\text{Strategic Alignment} + 0.10 \\times \\text{Sentiment} + 0.10 \\times \\text{Usage Impact}$$
 
 **Factor Weights Breakdown:**
-- **Customer Impact (35%)**: Direct positive effect on user productivity, retention, and delight.
-- **Urgency (30%)**: Criticality of resolving active blockers, outages, or compliance risks.
-- **Customer Demand (20%)**: Volume of independent customer requests and ticket frequency.
-- **Business Value (15%)**: Alignment with ARR growth, contract expansion, and enterprise deals.
-
-All factors are rated from 1 to 10. The resulting priority score is also strictly bounded between 1.00 and 10.00.`
+- **Customer Demand (25%)**: Aggregated customer feedback volume and request intensity.
+- **Urgency (20%)**: Criticality of resolving workflow blockers, escalations, and compliance risks.
+- **Business Impact (20%)**: Direct positive effect on user productivity, retention, and enterprise value.
+- **Strategic Alignment (15%)**: Alignment with company OKRs and quarterly product roadmap goals.
+- **Customer Sentiment (10%)**: Grounded sentiment scores from customer feedback quotes.
+- **Usage Impact (10%)**: Telemetry adoption and event usage analytics from MongoDB rollups (auto-reweighted if missing).`
   }
 
   // 8. Identify release risks

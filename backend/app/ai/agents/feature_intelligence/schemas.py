@@ -215,12 +215,17 @@ class FeatureGroupResult(BaseModel):
         description="Tally of operational urgency across member requests",
     )
     common_themes: List[str] = Field(default_factory=list, description="Common thematic tags")
+    category: Optional[str] = Field(default="Feature Requests", description="Primary feedback category")
+    primary_tag: Optional[str] = Field(default=None, description="Primary thematic tag")
     common_pain_points: List[str] = Field(default_factory=list, description="Identified customer pain points")
     evidence: List[str] = Field(default_factory=list, description="Direct customer quotes")
     suggested_capability: Optional[str] = Field(default=None, description="Suggested product capability")
     grouping_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Grouping confidence")
     grouping_reason: Optional[str] = Field(default=None, description="Rationale for grouping")
     grouping_status: str = Field(default="suggested", description="Feature group workflow status")
+    feedback_items: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="Detailed member feedback records if populated"
+    )
     created_at: Optional[datetime] = Field(default=None, description="Creation timestamp")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
@@ -286,4 +291,22 @@ class DuplicateDetectionResponse(BaseModel):
     duplicates_found: int = Field(..., ge=0, description="Number of duplicate relationships identified")
     results: List[DuplicateDetectionItem] = Field(default_factory=list, description="Itemized duplicate evaluation details")
     execution_metadata: Dict[str, Any] = Field(default_factory=dict, description="Execution telemetry")
+
+
+class MergeFeatureGroupsRequest(BaseModel):
+    """API request payload for merging two feature groups."""
+    workspace_id: str = Field(..., min_length=1, description="Target workspace identifier")
+    source_group_id: str = Field(..., min_length=1, description="Source feature group to be merged and deactivated")
+    target_group_id: str = Field(..., min_length=1, description="Destination feature group that absorbs feedback items")
+
+
+class MergeFeatureGroupsResponse(BaseModel):
+    """API response contract returning updated target feature group and merge summary."""
+    workspace_id: str = Field(..., description="Workspace ID")
+    source_group_id: str = Field(..., description="Merged source feature group ID")
+    target_group_id: str = Field(..., description="Target feature group ID")
+    repointed_feedback_count: int = Field(default=0, ge=0, description="Number of feedback records repointed to target")
+    updated_target_group: FeatureGroupResult = Field(..., description="Updated destination feature group")
+    message: str = Field(..., description="Human-readable outcome message")
+
 

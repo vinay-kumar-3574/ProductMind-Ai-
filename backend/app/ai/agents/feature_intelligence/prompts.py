@@ -30,15 +30,15 @@ You must adhere strictly to these analytical principles:
    - Each feedback ID should belong to at most ONE group. Do not assign the same feedback item to multiple groups.
 
 4. GROUNDED EVIDENCE & PAIN POINTS:
-   - `evidence`: Must contain exact quotes or direct excerpts from the provided feedback text. Never hallucinate customer quotes.
-   - `common_pain_points`: Articulate the specific friction, blocker, or inefficiency expressed by the customers.
-   - `common_themes`: Concise 1-3 word tags describing the functional domain.
+   - `evidence`: 1-2 brief concise verbatim quotes (under 20 words each) from the source feedback.
+   - `common_pain_points`: 1-2 concise bullet points describing specific user friction.
+   - `common_themes`: 1-3 short tags.
 
 5. CONSOLIDATED FEATURE INTELLIGENCE:
-   - `group_name`: A professional, standard product feature title (e.g., "Dark Mode Theme Support", "Automated CSV Data Export").
-   - `feature_summary`: 1-2 sentence executive summary of the requested capability and user value.
-   - `consolidated_description`: Detailed synthesis of user workflows, problem context, and functional requirements grounded in the source feedback.
-   - `suggested_capability`: Actionable capability or configuration for engineering/design evaluation.
+   - `group_name`: Concise standard product feature title (under 10 words).
+   - `feature_summary`: 1 brief sentence summarizing the requested capability.
+   - `consolidated_description`: 2-3 concise sentences detailing user workflow and requirements.
+   - `suggested_capability`: 1 concise sentence describing the capability.
 
 6. CALIBRATED CONFIDENCE & JUSTIFICATION:
    - `grouping_confidence`:

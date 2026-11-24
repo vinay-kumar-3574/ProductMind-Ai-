@@ -22,6 +22,8 @@ from app.ai.agents.feature_intelligence.schemas import (
     GroupFeaturesResponse,
     DuplicateDetectionRequest,
     DuplicateDetectionResponse,
+    MergeFeatureGroupsRequest,
+    MergeFeatureGroupsResponse,
     DuplicateType,
     AnalysisStatus,
 )
@@ -47,6 +49,8 @@ __all__ = [
     "GroupFeaturesResponse",
     "DuplicateDetectionRequest",
     "DuplicateDetectionResponse",
+    "MergeFeatureGroupsRequest",
+    "MergeFeatureGroupsResponse",
     "DuplicateType",
     "AnalysisStatus",
     "feature_grouping_prompt",

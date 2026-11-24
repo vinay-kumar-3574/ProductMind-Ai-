@@ -5,6 +5,7 @@ LLM agent execution, deterministic validation & metrics aggregation, and MongoDB
 """
 
 from datetime import datetime, timezone
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 from bson import ObjectId
@@ -24,6 +25,7 @@ from app.ai.agents.feature_intelligence.schemas import (
     GroupFeaturesResponse,
     DuplicateDetectionItem,
     DuplicateDetectionResponse,
+    MergeFeatureGroupsResponse,
     DuplicateType,
 )
 from app.core.enums import (
@@ -176,30 +178,63 @@ class FeatureIntelligenceService:
         candidate_lookup = {c.feedback_id: c for c in candidates}
 
         # ---------------------------------------------------------------------
-        # Stage 3 & 4: LLM Semantic Grouping Execution
+        # Stage 3 & 4: LLM Semantic Grouping Execution with Bounded Batches
         # ---------------------------------------------------------------------
-        agent_exec = await self.agent.execute(
-            input_data={
-                "candidates": candidates,
-                "confidence_threshold": confidence_threshold,
-                "min_group_size": min_group_size,
-            },
-            temperature=0.1,
-            max_output_tokens=800,
-        )
+        # Limit candidate chunk size to 6 to guarantee complete, untruncated JSON within token limits
+        BATCH_CHUNK_SIZE = 6
+        candidate_batches = [
+            candidates[i:i + BATCH_CHUNK_SIZE]
+            for i in range(0, len(candidates), BATCH_CHUNK_SIZE)
+        ]
 
-        agent_output = agent_exec.data
-        metadata = agent_exec.metadata.model_dump()
+        all_sanitized_groups: List[FeatureGroupAnalysis] = []
+        all_ungrouped_ids: List[str] = []
+        batch_metadata: List[Dict[str, Any]] = []
 
-        # ---------------------------------------------------------------------
-        # Stage 5 & 6: Deterministic Validation & Metric Aggregation
-        # ---------------------------------------------------------------------
-        sanitized_groups, ungrouped_ids = validate_and_sanitize_groups(
-            agent_output=agent_output,
-            candidates=candidates,
-            confidence_threshold=confidence_threshold,
-            min_group_size=min_group_size,
-        )
+        for batch_idx, batch_candidates in enumerate(candidate_batches):
+            # If not first batch, apply a slight buffer to avoid RPM/TPM bursts
+            if batch_idx > 0:
+                await asyncio.sleep(2.0)
+
+            try:
+                agent_exec = await self.agent.execute(
+                    input_data={
+                        "candidates": batch_candidates,
+                        "confidence_threshold": confidence_threshold,
+                        "min_group_size": min_group_size,
+                    },
+                    temperature=0.1,
+                    max_output_tokens=4096,
+                )
+
+                batch_output = agent_exec.data
+                batch_metadata.append(agent_exec.metadata.model_dump())
+
+                sanitized, ungrouped = validate_and_sanitize_groups(
+                    agent_output=batch_output,
+                    candidates=batch_candidates,
+                    confidence_threshold=confidence_threshold,
+                    min_group_size=min_group_size,
+                )
+                all_sanitized_groups.extend(sanitized)
+                all_ungrouped_ids.extend(ungrouped)
+
+            except Exception as batch_err:
+                logger.error(
+                    "Feature grouping batch %d/%d failed: %s",
+                    batch_idx + 1,
+                    len(candidate_batches),
+                    batch_err,
+                )
+                # If this is the only batch or no groups have been created, re-raise to notify user
+                if len(candidate_batches) == 1 or not all_sanitized_groups:
+                    raise batch_err
+                # Otherwise, record failed batch items as ungrouped and continue with remaining batches
+                all_ungrouped_ids.extend([c.feedback_id for c in batch_candidates])
+
+        sanitized_groups = all_sanitized_groups
+        ungrouped_ids = list(dict.fromkeys(all_ungrouped_ids))
+        metadata = batch_metadata[0] if batch_metadata else {}
 
         # ---------------------------------------------------------------------
         # Stage 7: MongoDB Persistence & Linkage
@@ -273,6 +308,20 @@ class FeatureIntelligenceService:
             )
             persisted_results.append(result_item)
 
+        # Trigger automatic background AI prioritization for newly created feature groups
+        if persisted_results and self.feature_group_repo is not None:
+            try:
+                from app.services.prioritization_background import PrioritizationBackgroundWorker
+                new_group_ids = [r.feature_group_id for r in persisted_results]
+                PrioritizationBackgroundWorker.get_instance().trigger_auto_prioritization(
+                    db=self.feature_group_repo.db,
+                    workspace_id=workspace_id,
+                    feature_group_ids=new_group_ids,
+                    force_reanalyze=True,
+                )
+            except Exception as auto_prio_err:
+                logger.warning("Could not trigger auto-prioritization after grouping: %s", auto_prio_err)
+
         return GroupFeaturesResponse(
             workspace_id=workspace_id,
             groups_created=len(persisted_results),
@@ -301,6 +350,8 @@ class FeatureIntelligenceService:
         if not self.feature_group_repo:
             return []
 
+        ws_oid = ObjectId(str(workspace_id)) if ObjectId.is_valid(str(workspace_id)) else workspace_id
+
         groups = await self.feature_group_repo.find_by_workspace_and_filters(
             workspace_id=workspace_id,
             status=status,
@@ -320,6 +371,18 @@ class FeatureIntelligenceService:
 
             fids = [str(fid) for fid in g.related_feedback_ids] if g.related_feedback_ids else []
 
+            # If related_feedback_ids is empty in database, fallback to querying feedback items pointing to this group
+            if not fids and self.feedback_repo:
+                pointing_cursor = self.feedback_repo.collection.find(
+                    {"workspaceId": ws_oid, "featureGroupId": g.id},
+                    {"_id": 1}
+                )
+                pointing_docs = await pointing_cursor.to_list(length=100)
+                if pointing_docs:
+                    fids = [str(d["_id"]) for d in pointing_docs]
+
+            cat_val = g.category.value if hasattr(g.category, "value") else str(g.category or "Feature Requests")
+
             results.append(
                 FeatureGroupResult(
                     feature_group_id=str(g.id),
@@ -328,11 +391,13 @@ class FeatureIntelligenceService:
                     feature_summary=g.feature_summary or g.description[:200],
                     consolidated_description=g.description,
                     related_feedback_ids=fids,
-                    total_request_count=g.feedback_count,
+                    total_request_count=g.feedback_count or len(fids),
                     unique_customer_count=g.unique_customer_count or 1,
                     sentiment_distribution=sent_dist,
                     urgency_distribution=g.urgency_distribution or {},
                     common_themes=g.common_themes or [g.primary_tag],
+                    category=cat_val,
+                    primary_tag=g.primary_tag,
                     common_pain_points=g.pain_points or [],
                     evidence=g.evidence or [],
                     suggested_capability=g.suggested_capability,
@@ -382,6 +447,42 @@ class FeatureIntelligenceService:
         }
         fids = [str(fid) for fid in g.related_feedback_ids] if g.related_feedback_ids else []
 
+        # Populate member feedback records
+        feedback_items_data: List[Dict[str, Any]] = []
+        if self.feedback_repo:
+            valid_foids = [ObjectId(fid) for fid in fids if ObjectId.is_valid(fid)]
+            query_conds = []
+            if valid_foids:
+                query_conds.append({"_id": {"$in": valid_foids}})
+            query_conds.append({"featureGroupId": ObjectId(group_id)})
+            
+            fb_cursor = self.feedback_repo.collection.find(
+                {"workspaceId": ObjectId(str(workspace_id)), "$or": query_conds}
+            )
+            fb_docs = await fb_cursor.to_list(length=100)
+            seen_fb_ids = set()
+            for fb in fb_docs:
+                fb_id_str = str(fb.get("_id") or fb.get("id"))
+                if fb_id_str in seen_fb_ids:
+                    continue
+                seen_fb_ids.add(fb_id_str)
+                feedback_items_data.append({
+                    "id": fb_id_str,
+                    "title": fb.get("title", ""),
+                    "description": fb.get("description", ""),
+                    "customer": fb.get("customerName") or fb.get("customer_name") or fb.get("customer", "Anonymous"),
+                    "company": fb.get("companyName") or fb.get("company_name") or fb.get("company", ""),
+                    "sentiment": fb.get("sentiment", "Neutral"),
+                    "priority": fb.get("priority", "Medium"),
+                    "sourceType": fb.get("sourceType") or fb.get("source_type", "manual"),
+                    "createdAt": str(fb.get("createdAt") or fb.get("created_at") or ""),
+                })
+            # Also update fids list if pointing feedback items were discovered
+            if not fids and seen_fb_ids:
+                fids = list(seen_fb_ids)
+
+        cat_val = g.category.value if hasattr(g.category, "value") else str(g.category or "Feature Requests")
+
         return FeatureGroupResult(
             feature_group_id=str(g.id),
             workspace_id=str(g.workspace_id),
@@ -389,19 +490,185 @@ class FeatureIntelligenceService:
             feature_summary=g.feature_summary or g.description[:200],
             consolidated_description=g.description,
             related_feedback_ids=fids,
-            total_request_count=g.feedback_count,
+            total_request_count=g.feedback_count or len(fids),
             unique_customer_count=g.unique_customer_count or 1,
             sentiment_distribution=sent_dist,
             urgency_distribution=g.urgency_distribution or {},
             common_themes=g.common_themes or [g.primary_tag],
+            category=cat_val,
+            primary_tag=g.primary_tag,
             common_pain_points=g.pain_points or [],
             evidence=g.evidence or [],
             suggested_capability=g.suggested_capability,
             grouping_confidence=g.grouping_confidence or 0.8,
             grouping_reason=g.grouping_reason,
             grouping_status=g.status.value if hasattr(g.status, "value") else str(g.status),
+            feedback_items=feedback_items_data,
             created_at=g.created_at,
             updated_at=g.updated_at,
+        )
+
+    async def get_feature_group_feedback_items(
+        self,
+        group_id: str,
+        workspace_id: str,
+        user: User,
+    ) -> List[Dict[str, Any]]:
+        """Retrieves actual customer feedback items belonging to a feature group."""
+        group_res = await self.get_feature_group_by_id(group_id, workspace_id, user)
+        return group_res.feedback_items or []
+
+    async def merge_feature_groups(
+        self,
+        workspace_id: str,
+        source_group_id: str,
+        target_group_id: str,
+        user: User,
+    ) -> MergeFeatureGroupsResponse:
+        """
+        Merges a source feature group into a destination target feature group:
+        1. Enforces workspace authorization and checks IDs.
+        2. Validates that source != target and neither is already merged.
+        3. Repoints all feedback items to the destination group.
+        4. Recalculates demand counts and sentiment distribution deterministically.
+        5. Marks source group as status='merged' with mergedIntoGroupId set.
+        6. Updates target group in MongoDB Atlas and returns updated FeatureGroupResult.
+        """
+        await self.verify_workspace_access(user, workspace_id)
+
+        if not ObjectId.is_valid(workspace_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid workspace ID format: '{workspace_id}'",
+            )
+        ws_oid = ObjectId(workspace_id)
+
+        if not ObjectId.is_valid(source_group_id) or not ObjectId.is_valid(target_group_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Both source_group_id and target_group_id must be valid ObjectIds.",
+            )
+
+        if source_group_id == target_group_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot merge a feature group into itself.",
+            )
+
+        source_oid = ObjectId(source_group_id)
+        target_oid = ObjectId(target_group_id)
+
+        if not self.feature_group_repo or not self.feedback_repo:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database service unavailable",
+            )
+
+        source_group = await self.feature_group_repo.find_by_id(source_oid)
+        target_group = await self.feature_group_repo.find_by_id(target_oid)
+
+        if not source_group or str(source_group.workspace_id) != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source feature group not found in active workspace.",
+            )
+
+        if not target_group or str(target_group.workspace_id) != workspace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Target feature group not found in active workspace.",
+            )
+
+        source_status = source_group.status.value if hasattr(source_group.status, "value") else str(source_group.status)
+        target_status = target_group.status.value if hasattr(target_group.status, "value") else str(target_group.status)
+
+        if source_status == "merged":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Source feature group has already been merged into another group.",
+            )
+
+        if target_status == "merged":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Target feature group has already been merged and cannot absorb new feedback.",
+            )
+
+        # 1. Combine unique feedback IDs
+        source_fids = [str(fid) for fid in (source_group.related_feedback_ids or [])]
+        target_fids = [str(fid) for fid in (target_group.related_feedback_ids or [])]
+        all_unique_fids = list(dict.fromkeys(target_fids + source_fids))
+        valid_foids = [ObjectId(fid) for fid in all_unique_fids if ObjectId.is_valid(fid)]
+
+        # 2. Query underlying feedback records to recalculate metrics
+        cursor = self.feedback_repo.collection.find({"_id": {"$in": valid_foids}, "workspaceId": ws_oid})
+        raw_feedback_docs = await cursor.to_list(length=500)
+        candidates = filter_eligible_feature_requests(raw_feedback_docs)
+        candidate_lookup = {c.feedback_id: c for c in candidates}
+
+        # 3. Recalculate demand metrics
+        metrics = calculate_demand_metrics(all_unique_fids, candidate_lookup)
+
+        # Combine pain points and evidence without duplicates
+        combined_pain_points = list(dict.fromkeys((target_group.pain_points or []) + (source_group.pain_points or [])))
+        combined_evidence = list(dict.fromkeys((target_group.evidence or []) + (source_group.evidence or [])))
+
+        # 4. Repoint all feedback records of source to target
+        repointed_res = await self.feedback_repo.collection.update_many(
+            {"workspaceId": ws_oid, "$or": [{"featureGroupId": source_oid}, {"_id": {"$in": [ObjectId(fid) for fid in source_fids if ObjectId.is_valid(fid)]}}]},
+            {"$set": {"featureGroupId": target_oid}},
+        )
+
+        now = datetime.now(timezone.utc)
+
+        # 5. Update target group in MongoDB
+        target_update = {
+            "relatedFeedbackIds": valid_foids,
+            "feedbackCount": metrics["total_request_count"],
+            "uniqueCustomerCount": metrics["unique_customer_count"],
+            "sentimentDistribution": {
+                "Positive": metrics["sentiment_distribution"]["Positive"],
+                "Neutral": metrics["sentiment_distribution"]["Neutral"],
+                "Negative": metrics["sentiment_distribution"]["Negative"],
+            },
+            "urgencyDistribution": metrics["urgency_distribution"],
+            "painPoints": combined_pain_points,
+            "evidence": combined_evidence,
+            "updatedAt": now,
+        }
+        await self.feature_group_repo.collection.update_one({"_id": target_oid}, {"$set": target_update})
+
+        # 6. Mark source group as merged
+        source_update = {
+            "status": FeatureGroupStatus.MERGED.value,
+            "mergedIntoGroupId": target_oid,
+            "updatedAt": now,
+        }
+        await self.feature_group_repo.collection.update_one({"_id": source_oid}, {"$set": source_update})
+
+        # 7. Retrieve updated target result
+        updated_target = await self.get_feature_group_by_id(target_group_id, workspace_id, user)
+
+        # Trigger automatic background AI recalculation for merged feature group
+        if self.feature_group_repo is not None:
+            try:
+                from app.services.prioritization_background import PrioritizationBackgroundWorker
+                PrioritizationBackgroundWorker.get_instance().trigger_auto_prioritization(
+                    db=self.feature_group_repo.db,
+                    workspace_id=workspace_id,
+                    feature_group_ids=[target_group_id],
+                    force_reanalyze=True,
+                )
+            except Exception as auto_prio_err:
+                logger.warning("Could not trigger auto-prioritization after merge: %s", auto_prio_err)
+
+        return MergeFeatureGroupsResponse(
+            workspace_id=workspace_id,
+            source_group_id=source_group_id,
+            target_group_id=target_group_id,
+            repointed_feedback_count=repointed_res.modified_count,
+            updated_target_group=updated_target,
+            message=f"Successfully merged '{source_group.title}' into '{target_group.title}'. {repointed_res.modified_count} feedback records repointed.",
         )
 
     async def detect_duplicates(

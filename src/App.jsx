@@ -21,7 +21,6 @@ import AggregationPage from './pages/AggregationPage'
 import InsightsPage from './pages/InsightsPage'
 import PersonasPage from './pages/PersonasPage'
 import PrioritizationPage from './pages/PrioritizationPage'
-import SimulatorPage from './pages/SimulatorPage'
 import PRDGeneratorPage from './pages/PRDGeneratorPage'
 import RoadmapPage from './pages/RoadmapPage'
 import ExperimentsPage from './pages/ExperimentsPage'
@@ -65,7 +64,6 @@ export default function App() {
                 <Route path="/insights" element={<Navigate to="/feedback?tab=insights" replace />} />
                 <Route path="/personas" element={<PersonasPage />} />
                 <Route path="/prioritization" element={<PrioritizationPage />} />
-                <Route path="/simulator" element={<Navigate to="/prioritization?tab=simulator" replace />} />
 
                 {/* PRD Generator (support both /prd-generator and /prds) */}
                 <Route path="/prd-generator" element={<PRDGeneratorPage />} />

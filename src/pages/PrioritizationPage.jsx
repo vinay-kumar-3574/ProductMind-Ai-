@@ -21,7 +21,6 @@ import {
   ChevronRight,
   ArrowUpDown,
   Layers,
-  Calculator,
   ExternalLink,
   GitCompare,
   Brain,
@@ -29,23 +28,11 @@ import {
   Quote,
 } from 'lucide-react'
 import { Card, Badge, Button, Modal, DemoModeBanner } from '../components/common'
-import { calculatePriorityScore, getScoreBreakdown, getPriorityTier, FACTOR_WEIGHTS } from '../data/scoringFormulas'
 import { prioritizationService } from '../services/api/prioritizationService'
 import { useWorkspace } from '../context/WorkspaceContext'
-import { SimulatorPage } from './SimulatorPage'
 
 export function PrioritizationPage() {
   const navigate = useNavigate()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const activeTab = searchParams.get('tab') === 'simulator' ? 'simulator' : 'matrix'
-
-  const handleTabChange = (tab) => {
-    if (tab === 'simulator') {
-      setSearchParams({ tab: 'simulator' })
-    } else {
-      setSearchParams({})
-    }
-  }
   const {
     features,
     feedback,
@@ -63,20 +50,34 @@ export function PrioritizationPage() {
 
   // Fetch stored prioritization results from backend
   const loadPrioritization = React.useCallback(async () => {
-    if (!currentWorkspace?.id) return
+    if (!currentWorkspace?.id) {
+      setAiPrioritizationResults([])
+      setIsLoadingAiPrioritization(false)
+      return
+    }
+    setIsLoadingAiPrioritization(true)
+    setAiError(null)
     try {
       const results = await prioritizationService.getPrioritizationResults(currentWorkspace.id)
-      if (Array.isArray(results) && results.length > 0) {
+      if (Array.isArray(results)) {
         setAiPrioritizationResults(results)
+      } else {
+        setAiPrioritizationResults([])
       }
     } catch (err) {
       console.warn('Could not load prioritization results:', err)
+      setAiError(err?.message || 'Failed to load prioritization results.')
+      setAiPrioritizationResults([])
+    } finally {
+      setIsLoadingAiPrioritization(false)
     }
   }, [currentWorkspace?.id])
 
   React.useEffect(() => {
+    setAiPrioritizationResults([])
+    setAiError(null)
     loadPrioritization()
-  }, [loadPrioritization])
+  }, [currentWorkspace?.id, loadPrioritization])
 
   // Run AI Prioritization Engine
   const handleRunAIPrioritization = async () => {
@@ -124,10 +125,6 @@ export function PrioritizationPage() {
   // Form state
   const [formName, setFormName] = useState('')
   const [formDescription, setFormDescription] = useState('')
-  const [formImpact, setFormImpact] = useState(7)
-  const [formUrgency, setFormUrgency] = useState(7)
-  const [formDemand, setFormDemand] = useState(7)
-  const [formValue, setFormValue] = useState(7)
   const [formStatus, setFormStatus] = useState('In Planning')
   const [formOwner, setFormOwner] = useState('Alex Rivera')
   const [formRelease, setFormRelease] = useState('v2.4.0')
@@ -138,25 +135,48 @@ export function PrioritizationPage() {
   const statuses = ['All', 'Backlog', 'Evaluating', 'In Planning', 'In Development', 'Ready for Release', 'Launched']
   const releasesList = ['All', 'v2.3.0', 'v2.4.0', 'v2.5.0', 'v3.0.0']
 
-  // Real-time score preview for modal
-  const previewScore = calculatePriorityScore({
-    customerImpact: formImpact,
-    urgency: formUrgency,
-    demand: formDemand,
-    businessValue: formValue,
-  })
+  // Feature priority resolution: AI 6-Factor Prioritization Engine is the single source of truth
+  const getFeaturePriority = React.useCallback((feat) => {
+    const matchedAi = aiPrioritizationResults.find(
+      r => (feat.featureGroupId && r.feature_group_id === feat.featureGroupId) ||
+           r.feature_group_id === feat.id ||
+           r.result_id === feat.id ||
+           (r.group_name && feat.name && r.group_name.trim().toLowerCase() === feat.name.trim().toLowerCase())
+    )
+    if (matchedAi) {
+      return {
+        score: Number(matchedAi.final_score ?? 0),
+        priorityLevel: matchedAi.priority_level || 'Medium',
+        isAiEvaluated: true,
+        matchedAi,
+        coverage: matchedAi.coverage_percentage ?? 100,
+        factorScores: matchedAi.factor_scores || {},
+      }
+    }
+    const baseScore = typeof feat.score === 'number' ? feat.score : 7.0
+    const normalized = baseScore <= 10 ? baseScore * 10 : baseScore
+    let level = 'Medium'
+    if (normalized >= 80) level = 'Critical'
+    else if (normalized >= 65) level = 'High'
+    else if (normalized < 45) level = 'Low'
+    return {
+      score: normalized,
+      priorityLevel: level,
+      isAiEvaluated: false,
+      matchedAi: null,
+      coverage: null,
+      factorScores: {},
+    }
+  }, [aiPrioritizationResults])
 
-  const previewBreakdown = getScoreBreakdown({
-    customerImpact: formImpact,
-    urgency: formUrgency,
-    demand: formDemand,
-    businessValue: formValue,
-  })
-
-  // Filter and sort features strictly by priority score
+  // Filter and sort features strictly by authoritative AI priority score and workspace
   const sortedFeatures = useMemo(() => {
     return [...features]
       .filter(f => {
+        // Enforce workspace scoping
+        if (currentWorkspace?.id && f.workspaceId && f.workspaceId !== currentWorkspace.id) {
+          return false
+        }
         if (searchTerm) {
           const q = searchTerm.toLowerCase()
           if (!f.name.toLowerCase().includes(q) && !f.description.toLowerCase().includes(q)) return false
@@ -165,17 +185,17 @@ export function PrioritizationPage() {
         if (releaseFilter !== 'All' && f.targetRelease !== releaseFilter) return false
         return true
       })
-      .sort((a, b) => b.score - a.score)
-  }, [features, searchTerm, statusFilter, releaseFilter])
+      .map(f => ({
+        ...f,
+        priority: getFeaturePriority(f),
+      }))
+      .sort((a, b) => b.priority.score - a.priority.score)
+  }, [features, currentWorkspace?.id, searchTerm, statusFilter, releaseFilter, getFeaturePriority])
 
   const handleOpenCreate = () => {
     setEditingFeature(null)
     setFormName('')
     setFormDescription('')
-    setFormImpact(7)
-    setFormUrgency(7)
-    setFormDemand(7)
-    setFormValue(7)
     setFormStatus('In Planning')
     setFormOwner('Alex Rivera')
     setFormRelease('v2.4.0')
@@ -186,10 +206,6 @@ export function PrioritizationPage() {
     setEditingFeature(feat)
     setFormName(feat.name)
     setFormDescription(feat.description)
-    setFormImpact(feat.customerImpact)
-    setFormUrgency(feat.urgency)
-    setFormDemand(feat.demand)
-    setFormValue(feat.businessValue)
     setFormStatus(feat.status)
     setFormOwner(feat.owner)
     setFormRelease(feat.targetRelease)
@@ -205,11 +221,8 @@ export function PrioritizationPage() {
 
     const payload = {
       name: formName,
+      workspaceId: currentWorkspace?.id,
       description: formDescription,
-      customerImpact: Number(formImpact),
-      urgency: Number(formUrgency),
-      demand: Number(formDemand),
-      businessValue: Number(formValue),
       status: formStatus,
       owner: formOwner,
       targetRelease: formRelease,
@@ -222,11 +235,6 @@ export function PrioritizationPage() {
     }
 
     setShowCreateModal(false)
-  }
-
-  // Quick slider adjustment from list
-  const handleQuickAdjust = (featId, factor, val) => {
-    updateFeature(featId, { [factor]: Number(val) })
   }
 
   // Add comment
@@ -247,57 +255,17 @@ export function PrioritizationPage() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Primary Workflow Sub-Tabs: Matrix vs Simulator */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-        <button
-          onClick={() => handleTabChange('matrix')}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-            activeTab === 'matrix'
-              ? 'bg-brand-600 text-white shadow-sm'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          <SlidersHorizontal className="w-4 h-4" />
-          <span>Prioritization Matrix</span>
-        </button>
-
-        <button
-          onClick={() => handleTabChange('simulator')}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-            activeTab === 'simulator'
-              ? 'bg-brand-600 text-white shadow-sm'
-              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-          }`}
-        >
-          <GitCompare className="w-4 h-4" />
-          <span>What-If Simulator</span>
-          <span
-            className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-              activeTab === 'simulator'
-                ? 'bg-white/20 text-white'
-                : 'bg-electric-500/10 text-electric-600 dark:text-electric-400 border border-electric-500/20'
-            }`}
-          >
-            Sandbox
-          </span>
-        </button>
-      </div>
-
-      {activeTab === 'simulator' ? (
-        <SimulatorPage />
-      ) : (
-        <>
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Feature Prioritization Matrix</h2>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20">
-                  Formulaic Model
-                </span>
-              </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono">
-            Score = (0.35 × Impact) + (0.30 × Urgency) + (0.20 × Demand) + (0.15 × Business Value)
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Feature Prioritization Matrix</h2>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20">
+              AI 6-Factor Model
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Authoritative feature ranking driven by the Automated AI 6-Factor Prioritization Engine.
           </p>
         </div>
 
@@ -328,13 +296,14 @@ export function PrioritizationPage() {
           </div>
 
           <Button
-            variant="primary"
+            variant="outline"
             size="sm"
             disabled={isLoadingAiPrioritization}
-            onClick={handleRunAIPrioritization}
-            icon={isLoadingAiPrioritization ? Loader2 : Brain}
+            onClick={loadPrioritization}
+            icon={isLoadingAiPrioritization ? Loader2 : Sparkles}
+            title="Refresh priority ranking from background AI evaluation"
           >
-            {isLoadingAiPrioritization ? 'Evaluating Features...' : 'Run AI Prioritization'}
+            {isLoadingAiPrioritization ? 'Syncing...' : 'Sync Priority'}
           </Button>
 
           <Link to="/aggregation">
@@ -400,13 +369,38 @@ export function PrioritizationPage() {
                         #{idx + 1}
                       </span>
                       <div>
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                          {res.group_name}
-                        </h4>
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                          Data Coverage: {Number(res.coverage_percentage ?? 100).toFixed(1)}%
-                          {missingList.length > 0 ? ` • Reweighted (missing: ${missingList.join(', ')})` : ' • All 6 Factors Measured'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                            {res.group_name}
+                          </h4>
+                          {res.analysis_status && res.analysis_status !== 'completed' && (
+                            <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${
+                              res.analysis_status === 'processing'
+                                ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20'
+                                : res.analysis_status === 'pending'
+                                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
+                            }`}>
+                              {res.analysis_status.toUpperCase()}
+                            </span>
+                          )}
+                          {res.analysis_status === 'completed' && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                              AUTOMATIC AI
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          <span>
+                            Data Coverage: {Number(res.coverage_percentage ?? 100).toFixed(1)}%
+                            {missingList.length > 0 ? ` • Reweighted (missing: ${missingList.join(', ')})` : ' • All 6 Factors Measured'}
+                          </span>
+                          {(res.last_analyzed_at || res.updated_at) && (
+                            <span>
+                              • Last Analyzed: {new Date(res.last_analyzed_at || res.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -474,6 +468,33 @@ export function PrioritizationPage() {
                     </p>
                   )}
 
+                  {/* Grounded Customer Evidence & Pain Point Severity */}
+                  {(res.customer_pain_point_severity || (res.supporting_evidence && res.supporting_evidence.length > 0)) && (
+                    <div className="p-2.5 rounded-xl bg-slate-100/70 dark:bg-navy-900/60 border border-slate-200/60 dark:border-slate-800 text-[11px] space-y-1.5">
+                      {res.customer_pain_point_severity && (
+                        <div className="text-slate-700 dark:text-slate-200">
+                          <strong className="text-slate-900 dark:text-white">Customer Pain Point Severity:</strong>{' '}
+                          {res.customer_pain_point_severity}
+                        </div>
+                      )}
+                      {res.supporting_evidence && res.supporting_evidence.length > 0 && (
+                        <div className="space-y-1">
+                          <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-1">
+                            <Quote className="w-3 h-3 text-brand-600 dark:text-brand-400" />
+                            Grounded Customer Evidence ({res.supporting_evidence.length}):
+                          </span>
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-300 italic pl-1">
+                            {res.supporting_evidence.slice(0, 3).map((ev, i) => (
+                              <li key={i} className="line-clamp-2">
+                                &ldquo;{ev}&rdquo;
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Usage Analytics Evidence Explainability */}
                   {(() => {
                     const ue = res.agent_metadata?.usage_analytics_evidence
@@ -514,73 +535,6 @@ export function PrioritizationPage() {
         </Card>
       )}
 
-      {/* Verified Mathematical Formula & Priority Thresholds Architecture */}
-      <Card className="p-4 bg-gradient-to-r from-brand-50/60 via-slate-50 to-sky-50/60 dark:from-brand-950/40 dark:via-navy-900 dark:to-sky-950/40 border border-brand-200/70 dark:border-brand-800/60">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Calculator className="w-4 h-4 text-brand-600 dark:text-brand-400" />
-              <span className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                Verified Scoring Model & Thresholds Architecture
-              </span>
-            </div>
-            <p className="text-xs text-slate-600 dark:text-slate-300 font-mono">
-              Score = (0.35 × Customer Impact) + (0.30 × Urgency) + (0.20 × Demand) + (0.15 × Business Value)
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold font-mono">
-            <span className="px-2 py-0.5 rounded-md border text-red-600 bg-red-500/10 border-red-500/20">
-              Urgent: ≥ 8.00
-            </span>
-            <span className="px-2 py-0.5 rounded-md border text-amber-600 bg-amber-500/10 border-amber-500/20">
-              High: ≥ 6.50
-            </span>
-            <span className="px-2 py-0.5 rounded-md border text-blue-600 bg-blue-500/10 border-blue-500/20">
-              Medium: ≥ 4.50
-            </span>
-            <span className="px-2 py-0.5 rounded-md border text-slate-600 bg-slate-500/10 border-slate-500/20">
-              Low: &lt; 4.50
-            </span>
-          </div>
-        </div>
-      </Card>
-
-      {/* Filter and Search Bar */}
-      <Card className="p-3.5 flex flex-col sm:flex-row items-center gap-3">
-        <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            placeholder="Search prioritized features..."
-            className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
-          >
-            {statuses.map(s => (
-              <option key={s} value={s}>Status: {s}</option>
-            ))}
-          </select>
-
-          <select
-            value={releaseFilter}
-            onChange={e => setReleaseFilter(e.target.value)}
-            className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
-          >
-            {releasesList.map(r => (
-              <option key={r} value={r}>Release: {r}</option>
-            ))}
-          </select>
-        </div>
-      </Card>
-
       {/* TABLE VIEW */}
       {viewMode === 'table' && (
         <Card className="overflow-hidden">
@@ -590,8 +544,8 @@ export function PrioritizationPage() {
                 <tr className="bg-slate-50 dark:bg-navy-950/60 border-b border-slate-200 dark:border-slate-800 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
                   <th className="py-3 px-4 w-12 text-center">Rank</th>
                   <th className="py-3 px-4">Feature Name & Details</th>
-                  <th className="py-3 px-4 text-center">Score</th>
-                  <th className="py-3 px-4">Factors (Impact / Urg / Dem / Val)</th>
+                  <th className="py-3 px-4 text-center">AI Priority Score</th>
+                  <th className="py-3 px-4">AI 6-Factor Coverage</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Target</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -599,8 +553,6 @@ export function PrioritizationPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                 {sortedFeatures.map((feat, idx) => {
-                  const breakdown = getScoreBreakdown(feat)
-                  const tier = getPriorityTier(feat.score)
                   return (
                     <tr key={feat.id} className="hover:bg-slate-50/70 dark:hover:bg-navy-950/40 transition-colors">
                       <td className="py-3 px-4 text-center">
@@ -626,28 +578,30 @@ export function PrioritizationPage() {
                       </td>
                       <td className="py-3 px-4 text-center">
                         <span className="text-base font-black text-brand-600 dark:text-brand-400 block font-mono">
-                          {feat.score.toFixed(2)}
+                          {feat.priority.score.toFixed(1)}
                         </span>
-                        <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${tier.color}`}>
-                          {tier.label}
-                        </span>
+                        <Badge variant={feat.priority.priorityLevel === 'Critical' ? 'danger' : feat.priority.priorityLevel === 'High' ? 'warning' : 'brand'}>
+                          {feat.priority.priorityLevel}
+                        </Badge>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="space-y-1 w-44">
-                          <div className="flex justify-between text-[10px] text-slate-400">
-                            <span>Imp: {feat.customerImpact}</span>
-                            <span>Urg: {feat.urgency}</span>
-                            <span>Dem: {feat.demand}</span>
-                            <span>Val: {feat.businessValue}</span>
+                        {feat.priority.isAiEvaluated ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                              <Brain className="w-3 h-3" />
+                              <span>6-Factor Evaluated ({Number(feat.priority.coverage).toFixed(0)}%)</span>
+                            </div>
+                            {feat.priority.matchedAi?.customer_pain_point_severity && (
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1">
+                                Severity: {feat.priority.matchedAi.customer_pain_point_severity}
+                              </span>
+                            )}
                           </div>
-                          {/* Visual factor breakdown bar */}
-                          <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 flex overflow-hidden">
-                            <div className="bg-brand-500" style={{ width: `${(breakdown.customerImpactContribution / 10) * 100}%` }} title={`Impact: ${breakdown.customerImpactContribution}`} />
-                            <div className="bg-rose-500" style={{ width: `${(breakdown.urgencyContribution / 10) * 100}%` }} title={`Urgency: ${breakdown.urgencyContribution}`} />
-                            <div className="bg-electric-500" style={{ width: `${(breakdown.demandContribution / 10) * 100}%` }} title={`Demand: ${breakdown.demandContribution}`} />
-                            <div className="bg-amber-500" style={{ width: `${(breakdown.businessValueContribution / 10) * 100}%` }} title={`Value: ${breakdown.businessValueContribution}`} />
-                          </div>
-                        </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-400 italic">
+                            Standard Matrix Rank
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <Badge variant="default">{feat.status}</Badge>
@@ -657,13 +611,6 @@ export function PrioritizationPage() {
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => handleTabChange('simulator')}
-                            className="p-1 text-slate-400 hover:text-electric-500 rounded-md"
-                            title="Simulate in What-If Sandbox"
-                          >
-                            <TrendingUp className="w-3.5 h-3.5" />
-                          </button>
                           <button
                             onClick={() => navigate(`/prd-generator?featureId=${feat.id}`, { state: { featureId: feat.id } })}
                             className="p-1 text-slate-400 hover:text-brand-600 rounded-md"
@@ -700,8 +647,6 @@ export function PrioritizationPage() {
       {viewMode === 'card' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {sortedFeatures.map((feat, idx) => {
-            const breakdown = getScoreBreakdown(feat)
-            const tier = getPriorityTier(feat.score)
             return (
               <Card key={feat.id} className="p-5 flex flex-col justify-between" hover>
                 <div>
@@ -714,8 +659,9 @@ export function PrioritizationPage() {
                     </div>
                     <div className="text-right">
                       <span className="text-base font-black text-brand-600 dark:text-brand-400 font-mono">
-                        {feat.score.toFixed(2)}
+                        {feat.priority.score.toFixed(1)}
                       </span>
+                      <span className="text-[10px] text-slate-400 ml-1">/ 100</span>
                     </div>
                   </div>
 
@@ -723,64 +669,40 @@ export function PrioritizationPage() {
                     {feat.description}
                   </p>
 
-                  {/* Factor sliders */}
-                  <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200/80 dark:border-slate-800 text-xs">
-                    <div>
-                      <div className="flex justify-between text-[11px] mb-1">
-                        <span className="text-slate-400">Impact (35%)</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{feat.customerImpact}/10</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        value={feat.customerImpact}
-                        onChange={e => handleQuickAdjust(feat.id, 'customerImpact', e.target.value)}
-                        className="w-full accent-brand-500 cursor-pointer"
-                      />
+                  {/* AI Prioritization Summary */}
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200/80 dark:border-slate-800 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                        <Brain className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" />
+                        AI 6-Factor Prioritization
+                      </span>
+                      <Badge variant={feat.priority.priorityLevel === 'Critical' ? 'danger' : feat.priority.priorityLevel === 'High' ? 'warning' : 'brand'}>
+                        {feat.priority.priorityLevel}
+                      </Badge>
                     </div>
-                    <div>
-                      <div className="flex justify-between text-[11px] mb-1">
-                        <span className="text-slate-400">Urgency (30%)</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{feat.urgency}/10</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        value={feat.urgency}
-                        onChange={e => handleQuickAdjust(feat.id, 'urgency', e.target.value)}
-                        className="w-full accent-rose-500 cursor-pointer"
-                      />
+                    <div className="flex justify-between items-center text-[11px] text-slate-500 dark:text-slate-400">
+                      <span>Priority Rank</span>
+                      <span className="font-mono font-bold text-slate-900 dark:text-white text-xs">
+                        #{idx + 1} ({feat.priority.score.toFixed(1)} / 100)
+                      </span>
                     </div>
-                    <div>
-                      <div className="flex justify-between text-[11px] mb-1">
-                        <span className="text-slate-400">Demand (20%)</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{feat.demand}/10</span>
+                    {feat.priority.isAiEvaluated ? (
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 space-y-0.5">
+                        <div className="flex justify-between">
+                          <span>Data Coverage:</span>
+                          <span className="font-mono">{Number(feat.priority.coverage).toFixed(0)}%</span>
+                        </div>
+                        {feat.priority.matchedAi?.customer_pain_point_severity && (
+                          <div className="line-clamp-1">
+                            <strong className="text-slate-700 dark:text-slate-300">Severity:</strong> {feat.priority.matchedAi.customer_pain_point_severity}
+                          </div>
+                        )}
                       </div>
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        value={feat.demand}
-                        onChange={e => handleQuickAdjust(feat.id, 'demand', e.target.value)}
-                        className="w-full accent-electric-500 cursor-pointer"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between text-[11px] mb-1">
-                        <span className="text-slate-400">Business Val (15%)</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{feat.businessValue}/10</span>
+                    ) : (
+                      <div className="text-[10px] text-slate-400 italic">
+                        Standard prioritization score mapped to 0–100 scale.
                       </div>
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        value={feat.businessValue}
-                        onChange={e => handleQuickAdjust(feat.id, 'businessValue', e.target.value)}
-                        className="w-full accent-amber-500 cursor-pointer"
-                      />
-                    </div>
+                    )}
                   </div>
                 </div>
 
@@ -835,7 +757,7 @@ export function PrioritizationPage() {
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[10px] font-bold text-brand-600 dark:text-brand-400 font-mono">
-                          Score {feat.score.toFixed(2)}
+                          Score {feat.priority.score.toFixed(1)}
                         </span>
                         <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
                           {feat.targetRelease}
@@ -856,8 +778,8 @@ export function PrioritizationPage() {
       <Modal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        title={editingFeature ? 'Edit Feature & Adjust Scoring' : 'Prioritize New Feature'}
-        subtitle="Priority scores are calculated automatically from the 4 weighted factors"
+        title={editingFeature ? 'Edit Feature' : 'Prioritize New Feature'}
+        subtitle="Features are evaluated and prioritized automatically by the AI 6-Factor Prioritization Engine"
       >
         <form onSubmit={handleSave} className="space-y-4">
           <div>
@@ -885,92 +807,6 @@ export function PrioritizationPage() {
               placeholder="Describe user story and architectural goal..."
               className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
-          </div>
-
-          {/* Real-time score preview card */}
-          <div className="p-3.5 rounded-2xl bg-brand-50/60 dark:bg-brand-950/40 border border-brand-200 dark:border-brand-800 flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-brand-700 dark:text-brand-300">
-                Calculated Priority Score
-              </span>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                ({previewBreakdown.customerImpactContribution} + {previewBreakdown.urgencyContribution} + {previewBreakdown.demandContribution} + {previewBreakdown.businessValueContribution})
-              </p>
-            </div>
-            <span className="text-2xl font-black text-brand-600 dark:text-brand-400 font-mono">
-              {previewScore.toFixed(2)} <span className="text-xs text-slate-400 font-normal">/ 10</span>
-            </span>
-          </div>
-
-          {/* Sliders for 4 factors */}
-          <div className="space-y-3 p-4 rounded-2xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800">
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="font-semibold text-slate-700 dark:text-slate-300">
-                  Customer Impact (Weight: 35%)
-                </span>
-                <span className="font-bold text-brand-600 dark:text-brand-400">{formImpact} / 10</span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={formImpact}
-                onChange={e => setFormImpact(Number(e.target.value))}
-                className="w-full accent-brand-500 cursor-pointer"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="font-semibold text-slate-700 dark:text-slate-300">
-                  Urgency (Weight: 30%)
-                </span>
-                <span className="font-bold text-rose-500">{formUrgency} / 10</span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={formUrgency}
-                onChange={e => setFormUrgency(Number(e.target.value))}
-                className="w-full accent-rose-500 cursor-pointer"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="font-semibold text-slate-700 dark:text-slate-300">
-                  Customer Demand (Weight: 20%)
-                </span>
-                <span className="font-bold text-electric-500">{formDemand} / 10</span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={formDemand}
-                onChange={e => setFormDemand(Number(e.target.value))}
-                className="w-full accent-electric-500 cursor-pointer"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="font-semibold text-slate-700 dark:text-slate-300">
-                  Business Value (Weight: 15%)
-                </span>
-                <span className="font-bold text-amber-500">{formValue} / 10</span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                value={formValue}
-                onChange={e => setFormValue(Number(e.target.value))}
-                className="w-full accent-amber-500 cursor-pointer"
-              />
-            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -1012,7 +848,7 @@ export function PrioritizationPage() {
           <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowCreateModal(false)}>Cancel</Button>
             <Button variant="primary" type="submit">
-              {editingFeature ? 'Update Priority' : 'Add to Prioritization'}
+              {editingFeature ? 'Update Feature' : 'Add Feature'}
             </Button>
           </div>
         </form>
@@ -1024,32 +860,45 @@ export function PrioritizationPage() {
           isOpen={!!inspectingFeature}
           onClose={() => setInspectingFeature(null)}
           title={inspectingFeature.name}
-          subtitle={`Calculated Priority Score: ${inspectingFeature.score.toFixed(2)}/10 • ${inspectingFeature.status}`}
+          subtitle={`AI Priority Score: ${(inspectingFeature.priority?.score ?? inspectingFeature.score ?? 70).toFixed(1)}/100 • ${inspectingFeature.status}`}
         >
           <div className="space-y-4">
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
               {inspectingFeature.description}
             </p>
 
-            {/* Score breakdown metrics */}
-            <div className="grid grid-cols-4 gap-2 text-center text-xs p-3 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800">
-              <div>
-                <span className="text-[10px] text-slate-400 block">Impact (35%)</span>
-                <span className="font-bold text-brand-600">{inspectingFeature.customerImpact}/10</span>
+            {/* AI 6-Factor metrics or score summary */}
+            {inspectingFeature.priority?.isAiEvaluated && inspectingFeature.priority?.factorScores && Object.keys(inspectingFeature.priority.factorScores).length > 0 ? (
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Brain className="w-3.5 h-3.5 text-brand-600" />
+                    AI 6-Factor Prioritization Metrics
+                  </span>
+                  <Badge variant={inspectingFeature.priority.priorityLevel === 'Critical' ? 'danger' : inspectingFeature.priority.priorityLevel === 'High' ? 'warning' : 'brand'}>
+                    {inspectingFeature.priority.priorityLevel}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-[10px] font-mono text-center">
+                  {Object.entries(inspectingFeature.priority.factorScores).map(([key, val]) => (
+                    <div key={key} className="p-1.5 rounded-lg bg-white dark:bg-navy-900 border border-slate-200/60 dark:border-slate-800">
+                      <div className="text-slate-400 capitalize truncate">{key.replace(/_/g, ' ')}</div>
+                      <div className="font-bold text-slate-900 dark:text-white">{Number(val).toFixed(1)}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div>
-                <span className="text-[10px] text-slate-400 block">Urgency (30%)</span>
-                <span className="font-bold text-rose-500">{inspectingFeature.urgency}/10</span>
+            ) : (
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-xs flex justify-between items-center text-slate-600 dark:text-slate-300">
+                <span className="flex items-center gap-1.5">
+                  <Brain className="w-3.5 h-3.5 text-brand-600" />
+                  Prioritization Rank:
+                </span>
+                <span className="font-bold text-brand-600 dark:text-brand-400 font-mono text-sm">
+                  {(inspectingFeature.priority?.score ?? inspectingFeature.score ?? 70).toFixed(1)} / 100
+                </span>
               </div>
-              <div>
-                <span className="text-[10px] text-slate-400 block">Demand (20%)</span>
-                <span className="font-bold text-electric-500">{inspectingFeature.demand}/10</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-400 block">Business Val (15%)</span>
-                <span className="font-bold text-amber-500">{inspectingFeature.businessValue}/10</span>
-              </div>
-            </div>
+            )}
 
             {/* Linked Feedback Section */}
             <div>
@@ -1127,8 +976,6 @@ export function PrioritizationPage() {
             </div>
           </div>
         </Modal>
-      )}
-        </>
       )}
     </div>
   )

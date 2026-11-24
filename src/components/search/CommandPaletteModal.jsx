@@ -49,7 +49,6 @@ export function CommandPaletteModal({ isOpen, onClose, onOpenNewFeedback, onOpen
     { id: 'nav-feed', category: 'Navigation', label: 'Go to Feedback Explorer', icon: MessageSquareText, action: () => navigate('/feedback') },
     { id: 'nav-ins', category: 'Navigation', label: 'Go to AI Insights & Clustering', icon: Sparkles, action: () => navigate('/feedback?tab=insights') },
     { id: 'nav-prio', category: 'Navigation', label: 'Go to Feature Prioritization', icon: SlidersHorizontal, action: () => navigate('/prioritization') },
-    { id: 'nav-sim', category: 'Navigation', label: 'Go to What-If Simulator', icon: GitCompare, action: () => navigate('/prioritization?tab=simulator') },
     { id: 'nav-prd', category: 'Navigation', label: 'Go to PRD Studio', icon: FileText, action: () => navigate('/prd-generator') },
     { id: 'nav-rd', category: 'Navigation', label: 'Go to Product Roadmap', icon: Milestone, action: () => navigate('/roadmap') },
     { id: 'nav-exp', category: 'Navigation', label: 'Go to Product Experiment Lab', icon: FlaskConical, action: () => navigate('/experiments') },

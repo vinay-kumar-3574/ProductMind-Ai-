@@ -178,6 +178,7 @@ export function AppProvider({ children }) {
     const score = calculatePriorityScore(item)
     const newFeature = {
       id: item.id || `feat-${Date.now()}`,
+      workspaceId: item.workspaceId || null,
       name: item.name,
       description: item.description,
       customerImpact: Number(item.customerImpact) || 5,
@@ -189,6 +190,7 @@ export function AppProvider({ children }) {
       owner: item.owner || 'Alex Rivera',
       targetRelease: item.targetRelease || 'v2.4.0',
       relatedFeedbackIds: item.relatedFeedbackIds || [],
+      featureGroupId: item.featureGroupId || null,
       comments: item.comments || [],
     }
     setFeatures(prev => [newFeature, ...prev])

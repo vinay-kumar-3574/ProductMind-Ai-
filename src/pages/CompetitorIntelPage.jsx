@@ -137,7 +137,7 @@ export function CompetitorIntelPage() {
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
               <tr>
                 <td className="py-2.5 px-3 font-semibold text-slate-800 dark:text-slate-200">Formulaic Priority Scoring</td>
-                <td className="py-2.5 px-3 bg-brand-50/30 dark:bg-brand-950/20 font-bold text-emerald-500">✓ Exact Weights (0.35/0.30/0.20/0.15)</td>
+                <td className="py-2.5 px-3 bg-brand-50/30 dark:bg-brand-950/20 font-bold text-emerald-500">✓ Automated AI 6-Factor Scoring Engine</td>
                 <td className="py-2.5 px-3 text-amber-500">⚠️ Subjective 1-3 Stars</td>
                 <td className="py-2.5 px-3 text-rose-500">✗ Voting Counts Only</td>
                 <td className="py-2.5 px-3 text-amber-500">⚠️ Complex Custom Calcs</td>

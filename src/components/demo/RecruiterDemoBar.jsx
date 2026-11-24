@@ -41,18 +41,12 @@ export function RecruiterDemoBar() {
     },
     {
       title: 'Step 3: Algorithmic Feature Prioritization',
-      description: 'Examine feature scores calculated via: (0.35 × Impact) + (0.30 × Urgency) + (0.20 × Demand) + (0.15 × Business Value). High-Performance Virtual Grid ranks #2 with 8.65/10.',
+      description: 'Examine feature rankings powered by the Automated AI 6-Factor Prioritization Engine across customer demand, urgency, impact, alignment, sentiment, and usage telemetry.',
       targetPath: '/prioritization',
       actionLabel: 'View Prioritization Matrix',
     },
     {
-      title: 'Step 4: What-If Trade-Off Simulation',
-      description: 'Open the What-If Simulator sandbox. Adjust Urgency to 10 and Impact to 10 to simulate how the Virtual Grid jumps to Rank #1 before committing changes.',
-      targetPath: '/prioritization?tab=simulator',
-      actionLabel: 'Test What-If Sandbox',
-    },
-    {
-      title: 'Step 5: Generate 13-Section Engineering PRD',
+      title: 'Step 4: Generate 13-Section Engineering PRD',
       description: 'Review the comprehensive auto-generated PRD for the Virtualized Grid, complete with user stories, acceptance criteria, and non-functional requirements.',
       targetPath: '/prd-generator',
       actionLabel: 'Open PRD Generator',

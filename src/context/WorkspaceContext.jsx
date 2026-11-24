@@ -87,6 +87,9 @@ export function WorkspaceProvider({ children }) {
     if (found) {
       setCurrentWorkspace(found)
       setActiveWorkspaceId(found.id)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pmai:workspace_changed', { detail: { workspace: found, workspaceId: found.id } }))
+      }
     }
   }, [workspaces])
 

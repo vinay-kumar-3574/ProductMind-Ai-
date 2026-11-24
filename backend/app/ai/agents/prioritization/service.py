@@ -141,6 +141,9 @@ class PrioritizationService:
             supporting_evidence=scenario.supporting_evidence or [],
             missing_data=scenario.missing_data or [],
             recommendation=scenario.recommendation or "",
+            analysis_status=getattr(scenario, "analysis_status", "completed") or "completed",
+            error_message=getattr(scenario, "error_message", None),
+            last_analyzed_at=getattr(scenario, "last_analyzed_at", scenario.updated_at),
             agent_metadata=metadata,
             created_at=scenario.created_at,
             updated_at=scenario.updated_at,
@@ -629,6 +632,7 @@ class PrioritizationService:
                     feature_group_id=group.id,
                 )
                 if existing:
+                    now_utc = datetime.now(timezone.utc)
                     existing.final_score = final_score
                     existing.priority_level = priority_level.value
                     existing.factor_scores = {k: v for k, v in factor_scores.items() if v is not None}
@@ -640,9 +644,12 @@ class PrioritizationService:
                     existing.supporting_evidence = qual_eval.supporting_evidence
                     existing.missing_data = missing_data
                     existing.recommendation = recommendation
+                    existing.analysis_status = "completed"
+                    existing.error_message = None
+                    existing.last_analyzed_at = now_utc
                     existing.ai_metadata = ai_metadata
                     existing.version += 1
-                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.updated_at = now_utc
                     update_fields = {
                         "finalScore": existing.final_score,
                         "priorityLevel": existing.priority_level,
@@ -655,6 +662,9 @@ class PrioritizationService:
                         "supportingEvidence": existing.supporting_evidence,
                         "missingData": existing.missing_data,
                         "recommendation": existing.recommendation,
+                        "analysisStatus": "completed",
+                        "errorMessage": None,
+                        "lastAnalyzedAt": now_utc,
                         "aiMetadata": existing.ai_metadata,
                         "version": existing.version,
                     }
@@ -682,6 +692,8 @@ class PrioritizationService:
                         supporting_evidence=qual_eval.supporting_evidence,
                         missing_data=missing_data,
                         recommendation=recommendation,
+                        analysis_status="completed",
+                        last_analyzed_at=datetime.now(timezone.utc),
                         ai_metadata=ai_metadata,
                         is_active=True,
                     )
@@ -748,6 +760,28 @@ class PrioritizationService:
             limit=limit,
             skip=skip,
         )
+
+        # Automatic detection of unprioritized eligible feature groups in workspace
+        if self.feature_group_repo is not None:
+            try:
+                existing_fg_ids = {str(s.feature_group_id) for s in scenarios if s.feature_group_id}
+                all_eligible_groups = await self.feature_group_repo.find_by_workspace(
+                    workspace_id=ws_oid,
+                    filter_query={"status": {"$ne": "archived"}},
+                    limit=limit,
+                )
+                missing_fg_ids = [str(g.id) for g in all_eligible_groups if str(g.id) not in existing_fg_ids]
+                if missing_fg_ids:
+                    from app.services.prioritization_background import PrioritizationBackgroundWorker
+                    PrioritizationBackgroundWorker.get_instance().trigger_auto_prioritization(
+                        db=self.prioritization_repo.db,
+                        workspace_id=workspace_id,
+                        feature_group_ids=missing_fg_ids,
+                        force_reanalyze=False,
+                    )
+            except Exception as auto_detect_err:
+                logger.debug("Auto-prioritization check skipped: %s", auto_detect_err)
+
         return [self._scenario_to_result(s) for s in scenarios]
 
     async def get_prioritization_result_by_id(

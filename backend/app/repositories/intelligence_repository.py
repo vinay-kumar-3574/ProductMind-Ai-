@@ -31,8 +31,11 @@ class FeatureGroupRepository(BaseRepository[FeatureGroup]):
         skip: int = 0,
     ) -> List[FeatureGroup]:
         filter_query: Dict[str, Any] = {}
-        if status:
+        if status and status != "all":
             filter_query["status"] = status
+        elif status is None:
+            # Default: show active suggested and approved groups, hide absorbed/merged groups
+            filter_query["status"] = {"$ne": "merged"}
         if min_feedback_count is not None and min_feedback_count > 0:
             filter_query["feedbackCount"] = {"$gte": min_feedback_count}
 

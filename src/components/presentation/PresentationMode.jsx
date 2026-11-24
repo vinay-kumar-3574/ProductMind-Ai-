@@ -338,7 +338,7 @@ export function PresentationMode() {
             <div>
               <h2 className="text-2xl font-bold text-white">Algorithmic Feature Prioritization</h2>
               <p className="text-xs text-slate-400 mt-1 font-mono">
-                Priority Score = (0.35 × Impact) + (0.30 × Urgency) + (0.20 × Demand) + (0.15 × Business Value)
+                AI Composite = 0.25 Demand + 0.20 Urgency + 0.20 Business Impact + 0.15 Strategic Alignment + 0.10 Sentiment + 0.10 Usage Impact
               </p>
             </div>
             <div className="h-64 w-full">

@@ -554,7 +554,7 @@ export function DashboardPage() {
                   Top Priority Feature Requests
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Calculated: 0.35×Impact + 0.30×Urgency + 0.20×Demand + 0.15×Value
+                  Automated AI 6-Factor Prioritization Model
                 </p>
               </div>
               <Link to="/prioritization" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1">

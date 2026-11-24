@@ -51,10 +51,7 @@ export function TopNavbar({ onOpenSearch, onOpenCommandPalette }) {
       return { title: 'Feedback Explorer', parent: 'Intelligence' }
     }
     if (path === '/aggregation') return { title: 'Feature Request Aggregation', parent: 'Product Decisions' }
-    if (path === '/prioritization') {
-      if (tab === 'simulator') return { title: 'What-If Product Simulator', parent: 'Product Decisions' }
-      return { title: 'Feature Prioritization', parent: 'Product Decisions' }
-    }
+    if (path === '/prioritization') return { title: 'Feature Prioritization', parent: 'Product Decisions' }
     if (path === '/prd-generator') return { title: 'PRD Studio', parent: 'Specifications' }
     if (path === '/roadmap') {
       if (tab === 'readiness') return { title: 'Release Readiness Center', parent: 'Governance' }

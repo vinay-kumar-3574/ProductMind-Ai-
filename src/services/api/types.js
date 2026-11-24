@@ -61,7 +61,11 @@ export const API_ENDPOINTS = {
     GROUP: '/api/v1/ai/features/group',
     GROUPS: '/api/v1/ai/features/groups',
     GROUP_DETAIL: (id) => `/api/v1/ai/features/groups/${id}`,
+    GROUP_BY_ID: (id) => `/api/v1/ai/features/groups/${id}`,
+    GROUP_FEEDBACK: (id) => `/api/v1/ai/features/groups/${id}/feedback`,
     DUPLICATES: '/api/v1/ai/features/detect-duplicates',
+    DETECT_DUPLICATES: '/api/v1/ai/features/detect-duplicates',
+    MERGE: '/api/v1/ai/features/merge',
   },
 
   // AI Prioritization Agent (6-Factor Scoring Engine)

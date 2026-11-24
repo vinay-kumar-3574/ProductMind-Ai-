@@ -300,3 +300,88 @@ def test_detect_duplicates_success(mock_auth_user):
     assert data["duplicates_found"] == 1
     assert data["results"][0]["duplicate_type"] == "semantic_equivalent"
 
+
+# -------------------------------------------------------------------------
+# 5. Group Feedback & Merge Feature Groups Tests
+# -------------------------------------------------------------------------
+
+def test_get_feature_group_feedback_records(mock_auth_user):
+    """Verify GET /api/v1/ai/features/groups/{id}/feedback returns member feedback items."""
+    mock_service = MagicMock()
+    mock_service.get_feature_group_feedback_items = AsyncMock(
+        return_value=[
+            {
+                "id": MOCK_FEEDBACK_ID,
+                "title": "Add dark mode to analytics",
+                "description": "White background causes eye strain.",
+                "customer": "Alice",
+                "company": "Acme",
+                "sentiment": "Negative",
+                "sourceType": "manual",
+                "createdAt": "2026-11-21T10:00:00Z",
+            }
+        ]
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    app.dependency_overrides[get_feature_intelligence_service] = lambda: mock_service
+
+    response = client.get(f"/api/v1/ai/features/groups/{MOCK_GROUP_ID}/feedback?workspace_id={MOCK_WS_ID}")
+    assert response.status_code == status.HTTP_200_OK
+    items = response.json()
+    assert len(items) == 1
+    assert items[0]["title"] == "Add dark mode to analytics"
+    assert items[0]["sentiment"] == "Negative"
+
+
+def test_merge_feature_groups_success(mock_auth_user, sample_feature_group_result):
+    """Verify POST /api/v1/ai/features/merge merges two feature groups."""
+    mock_service = MagicMock()
+    from app.ai.agents.feature_intelligence import MergeFeatureGroupsResponse
+    mock_service.merge_feature_groups = AsyncMock(
+        return_value=MergeFeatureGroupsResponse(
+            workspace_id=MOCK_WS_ID,
+            source_group_id=MOCK_GROUP_ID,
+            target_group_id="660011223344556677889909",
+            repointed_feedback_count=2,
+            updated_target_group=sample_feature_group_result,
+            message="Successfully merged groups",
+        )
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    app.dependency_overrides[get_feature_intelligence_service] = lambda: mock_service
+
+    payload = {
+        "workspace_id": MOCK_WS_ID,
+        "source_group_id": MOCK_GROUP_ID,
+        "target_group_id": "660011223344556677889909",
+    }
+    response = client.post("/api/v1/ai/features/merge", json=payload)
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["source_group_id"] == MOCK_GROUP_ID
+    assert data["repointed_feedback_count"] == 2
+    assert data["updated_target_group"]["group_name"] == "Dark Mode Theme Support"
+
+
+def test_merge_feature_groups_self_merge_rejected(mock_auth_user):
+    """Verify POST /api/v1/ai/features/merge rejects merging group into itself."""
+    mock_service = MagicMock()
+    mock_service.merge_feature_groups = AsyncMock(
+        side_effect=HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot merge a feature group into itself.")
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+    app.dependency_overrides[get_feature_intelligence_service] = lambda: mock_service
+
+    payload = {
+        "workspace_id": MOCK_WS_ID,
+        "source_group_id": MOCK_GROUP_ID,
+        "target_group_id": MOCK_GROUP_ID,
+    }
+    response = client.post("/api/v1/ai/features/merge", json=payload)
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Cannot merge a feature group into itself" in response.json()["detail"]
+
+
