@@ -99,9 +99,49 @@ export const prdService = {
       ...(normalizedStrategicContext ? { strategic_context: normalizedStrategicContext } : {}),
     }
 
-    const response = await apiClient.post(API_ENDPOINTS.AI_PLANNING.GENERATE, payload)
+    const response = await apiClient.post(API_ENDPOINTS.AI_PLANNING.GENERATE, payload, { timeout: 90000 })
     if (!response?.success) {
       const err = new Error(response?.error || 'Failed to generate product plan.')
+      err.status = response?.status
+      throw err
+    }
+    return normalizePlan(response.data)
+  },
+
+  /**
+   * Run real AI User Stories generation / regeneration
+   */
+  async generateUserStories({
+    workspaceId = null,
+    featureGroupId = null,
+    planningId = null,
+    strategicContext = null,
+    forceApprovedOverwrite = false,
+  }) {
+    const wsId = workspaceId || getActiveWorkspaceId()
+    if (!wsId) {
+      throw new Error('Workspace ID is required to generate user stories.')
+    }
+    if (!featureGroupId && !planningId) {
+      throw new Error('Either featureGroupId or planningId must be provided.')
+    }
+
+    const normalizedStrategicContext =
+      typeof strategicContext === 'string'
+        ? { product_name: strategicContext, additional_planning_instructions: strategicContext }
+        : strategicContext
+
+    const payload = {
+      workspace_id: wsId,
+      ...(featureGroupId ? { feature_group_id: featureGroupId } : {}),
+      ...(planningId ? { planning_id: planningId } : {}),
+      ...(normalizedStrategicContext ? { strategic_context: normalizedStrategicContext } : {}),
+      force_approved_overwrite: forceApprovedOverwrite,
+    }
+
+    const response = await apiClient.post(API_ENDPOINTS.AI_PLANNING.GENERATE_STORIES, payload, { timeout: 90000 })
+    if (!response?.success) {
+      const err = new Error(response?.error || 'Failed to generate user stories.')
       err.status = response?.status
       throw err
     }

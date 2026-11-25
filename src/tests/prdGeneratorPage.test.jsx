@@ -12,6 +12,7 @@ vi.mock('../services/api/prdService', () => ({
     listProductPlans: vi.fn(),
     getProductPlan: vi.fn(),
     generateProductPlan: vi.fn(),
+    generateUserStories: vi.fn(),
     updatePRDSections: vi.fn(),
     regenerateSection: vi.fn(),
     reviewProductPlan: vi.fn(),

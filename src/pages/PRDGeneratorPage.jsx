@@ -28,9 +28,12 @@ import {
   MessageSquare,
   ShieldCheck,
   ListChecks,
+  Calendar,
 } from 'lucide-react'
 import { Card, Badge, Button, Modal } from '../components/common'
 import { prdService, normalizePlanSections } from '../services/api/prdService'
+import { aggregationService } from '../services/api/aggregationService'
+import { prioritizationService } from '../services/api/prioritizationService'
 import { useWorkspace } from '../context/WorkspaceContext'
 import PRDValidationPanel from '../components/planning/validation/PRDValidationPanel'
 import UserStoryStudio from '../components/planning/UserStoryStudio'
@@ -89,11 +92,18 @@ export function PRDGeneratorPage() {
   const [showValidationPanel, setShowValidationPanel] = useState(false)
   const [unresolvedWarningModal, setUnresolvedWarningModal] = useState(null)
 
+  // Available workspace features state
+  const [availableFeatures, setAvailableFeatures] = useState([])
+  const [isLoadingFeatures, setIsLoadingFeatures] = useState(false)
+  const [featuresError, setFeaturesError] = useState(null)
+  const [isGeneratingStoriesAI, setIsGeneratingStoriesAI] = useState(false)
+
   // Generation Modal state
   const [showNewModal, setShowNewModal] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationError, setGenerationError] = useState(null)
-  const [selectedFeatureId, setSelectedFeatureId] = useState(() => targetFeatureId || features[0]?.id || '')
+  const [generationStatusMessage, setGenerationStatusMessage] = useState(null)
+  const [selectedFeatureId, setSelectedFeatureId] = useState(() => targetFeatureId || '')
   const [customTitle, setCustomTitle] = useState('')
 
   // 13 canonical sections configuration
@@ -114,11 +124,11 @@ export function PRDGeneratorPage() {
   ]
 
   // Approval protection status
-  const normalizedStatus = String(activePlan?.status || 'draft').toLowerCase()
+  const normalizedStatus = String(activePlan?.status || 'draft').toLowerCase().replace(/[\s-]+/g, '_')
   const isApproved = normalizedStatus === 'approved'
-  const isPendingReview = normalizedStatus === 'pending_review'
-  const isRejected = normalizedStatus === 'rejected'
-  const isDraft = normalizedStatus === 'draft'
+  const isPendingReview = normalizedStatus === 'pending_review' || normalizedStatus === 'in_review'
+  const isRejected = normalizedStatus === 'rejected' || normalizedStatus === 'changes_requested'
+  const isDraft = normalizedStatus === 'draft' || (!isApproved && !isPendingReview && !isRejected)
 
   // Extract structured stories from a plan document
   const extractStories = useCallback((plan) => {
@@ -202,6 +212,90 @@ export function PRDGeneratorPage() {
     }
   }, [currentWorkspace?.id, targetFeatureId, selectedPlanId, extractStories])
 
+  // Fetch available feature requests and prioritization scores for PRD generation
+  const loadAvailableFeatures = useCallback(async (wsId) => {
+    if (!wsId) {
+      setAvailableFeatures([])
+      return
+    }
+    setIsLoadingFeatures(true)
+    setFeaturesError(null)
+    try {
+      const [groups, prioResults] = await Promise.all([
+        aggregationService.getFeatureGroups(wsId).catch(err => {
+          console.warn('Failed to load feature groups:', err)
+          return []
+        }),
+        prioritizationService.getPrioritizationResults(wsId).catch(err => {
+          console.warn('Failed to load prioritization results:', err)
+          return []
+        }),
+      ])
+
+      const prioMap = new Map()
+      if (Array.isArray(prioResults)) {
+        prioResults.forEach(p => {
+          const fid = String(p.feature_group_id || p.featureGroupId || p.id || '')
+          if (fid) {
+            prioMap.set(fid, p)
+          }
+        })
+      }
+
+      let merged = []
+      if (Array.isArray(groups) && groups.length > 0) {
+        merged = groups.map(g => {
+          const gid = String(g.id || g.feature_group_id || '')
+          const prio = prioMap.get(gid)
+          const score = prio?.score ?? prio?.priority_score ?? g.priority_score ?? g.score ?? null
+          const tier = prio?.tier ?? prio?.priority_tier ?? g.priority_tier ?? 'Unscored'
+          return {
+            id: gid,
+            name: g.title || g.name || g.group_name || 'Untitled Feature Request',
+            title: g.title || g.name || g.group_name || 'Untitled Feature Request',
+            description: g.description || g.consolidated_description || g.feature_summary || '',
+            demandCount: g.count || g.total_request_count || g.feedback_count || 0,
+            painPoints: g.pain_points || g.painPoints || [],
+            score: typeof score === 'number' ? score : (score ? Number(score) : null),
+            tier: tier,
+            category: g.category || 'Feature',
+            evidence: g.evidence || [],
+          }
+        })
+      } else if (Array.isArray(features) && features.length > 0) {
+        merged = features.map(f => ({
+          id: String(f.id),
+          name: f.name || f.title || 'Untitled Feature',
+          title: f.name || f.title || 'Untitled Feature',
+          description: f.description || '',
+          demandCount: f.feedbackCount || f.demandCount || 1,
+          painPoints: f.painPoints || [],
+          score: f.score || null,
+          tier: f.tier || 'Unscored',
+          category: f.category || 'Feature',
+          evidence: [],
+        }))
+      }
+
+      setAvailableFeatures(merged)
+      if (merged.length > 0) {
+        setSelectedFeatureId(prev => {
+          if (prev && merged.some(f => f.id === prev)) return prev
+          if (targetFeatureId && merged.some(f => f.id === targetFeatureId)) return targetFeatureId
+          return merged[0].id
+        })
+      }
+    } catch (err) {
+      console.error('Failed to load available features:', err)
+      setFeaturesError(err.message || 'Failed to load feature requests')
+      if (Array.isArray(features) && features.length > 0) {
+        setAvailableFeatures(features)
+      }
+    } finally {
+      setIsLoadingFeatures(false)
+    }
+  }, [targetFeatureId, features])
+
   // Refetch when workspace changes or on mount
   useEffect(() => {
     let isCancelled = false
@@ -212,10 +306,13 @@ export function PRDGeneratorPage() {
       setActivePlan(null)
       setStructuredStories([])
       setEditableSections({})
+      setAvailableFeatures([])
       setIsLoadingPlans(false)
       setPlansError(null)
       return
     }
+
+    loadAvailableFeatures(wsId)
 
     setIsLoadingPlans(true)
     setPlansError(null)
@@ -263,7 +360,7 @@ export function PRDGeneratorPage() {
     return () => {
       isCancelled = true
     }
-  }, [currentWorkspace?.id, extractStories])
+  }, [currentWorkspace?.id, extractStories, targetFeatureId, loadAvailableFeatures])
 
   // Select a PRD and load its full details
   const handleSelectPlan = async (plan) => {
@@ -296,9 +393,14 @@ export function PRDGeneratorPage() {
       addToast('Active workspace is required.', 'error')
       return
     }
-    const feat = features.find(f => f.id === selectedFeatureId)
+    if (!selectedFeatureId) {
+      addToast('Please select a feature request to generate a PRD.', 'warning')
+      return
+    }
+    const feat = availableFeatures.find(f => f.id === selectedFeatureId) || features.find(f => f.id === selectedFeatureId)
     setIsGenerating(true)
     setGenerationError(null)
+    setGenerationStatusMessage('Synthesizing 13-section specification with AI grounding...')
 
     try {
       const docTitle = customTitle.trim() || (feat ? `${feat.name} Specification` : 'Product Requirements Document')
@@ -320,10 +422,101 @@ export function PRDGeneratorPage() {
       setValidationResult(null)
       addToast('Product Requirements Document generated with AI grounding and persisted to Atlas!', 'success')
     } catch (err) {
+      const isTimeout =
+        err?.status === 408 ||
+        err?.name === 'AbortError' ||
+        err?.message?.toLowerCase().includes('time') ||
+        err?.message?.toLowerCase().includes('timeout')
+
+      if (isTimeout) {
+        setGenerationStatusMessage('Generation is completing on server. Checking MongoDB Atlas...')
+        let recoveredPlan = null
+        for (let attempt = 0; attempt < 15; attempt++) {
+          await new Promise(r => setTimeout(r, 3000))
+          try {
+            const latestPlans = await prdService.listProductPlans(wsId)
+            if (Array.isArray(latestPlans) && latestPlans.length > 0) {
+              const matched = latestPlans.find(
+                p => p.featureId === selectedFeatureId || (feat && p.title?.includes(feat.name))
+              )
+              if (matched) {
+                recoveredPlan = matched
+                break
+              }
+            }
+          } catch {
+            // Continue polling
+          }
+        }
+
+        if (recoveredPlan) {
+          try {
+            const detail = await prdService.getProductPlan(recoveredPlan.id, wsId)
+            setPlans(prev => [detail, ...prev.filter(p => p.id !== detail.id)])
+            setSelectedPlanId(detail.id)
+            setActivePlan(detail)
+            setStructuredStories(extractStories(detail))
+            setEditableSections(detail.sections || {})
+          } catch {
+            setPlans(prev => [recoveredPlan, ...prev.filter(p => p.id !== recoveredPlan.id)])
+            setSelectedPlanId(recoveredPlan.id)
+            setActivePlan(recoveredPlan)
+            setStructuredStories(extractStories(recoveredPlan))
+            setEditableSections(recoveredPlan.sections || {})
+          }
+          setIsEditing(false)
+          setShowNewModal(false)
+          setCustomTitle('')
+          setValidationResult(null)
+          addToast('PRD successfully generated and recovered from MongoDB Atlas!', 'success')
+          return
+        }
+      }
+
       setGenerationError(err?.message || 'Failed to generate PRD')
       addToast(err?.message || 'Failed to generate PRD', 'error')
     } finally {
       setIsGenerating(false)
+      setGenerationStatusMessage(null)
+    }
+  }
+
+  // Generate / Regenerate User Stories specifically with AI
+  const handleGenerateUserStoriesAI = async () => {
+    if (!activePlan) return
+    if (isApproved) {
+      addToast('Cannot modify an approved PRD. Modifications are protected.', 'warning')
+      return
+    }
+    const wsId = currentWorkspace?.id || activePlan.workspace_id || activePlan.workspaceId
+    if (!wsId) {
+      addToast('Active workspace is required.', 'error')
+      return
+    }
+    setIsGeneratingStoriesAI(true)
+    try {
+      const updatedPlan = await prdService.generateUserStories({
+        workspaceId: wsId,
+        featureGroupId: activePlan.featureId || activePlan.feature_group_id,
+        planningId: activePlan.id || activePlan.planning_id,
+        strategicContext: activePlan.title,
+      })
+
+      setActivePlan(updatedPlan)
+      setPlans(prev => prev.map(p => (p.id === updatedPlan.id ? updatedPlan : p)))
+      const newStories = extractStories(updatedPlan)
+      setStructuredStories(newStories)
+      if (updatedPlan.sections) {
+        setEditableSections(updatedPlan.sections)
+      } else {
+        syncSectionsFromStories(newStories)
+      }
+      addToast('User stories and Given-When-Then criteria generated with AI!', 'success')
+    } catch (err) {
+      console.error('Error generating user stories with AI:', err)
+      addToast(err?.message || 'Failed to generate user stories with AI.', 'error')
+    } finally {
+      setIsGeneratingStoriesAI(false)
     }
   }
 
@@ -634,7 +827,7 @@ export function PRDGeneratorPage() {
 
   // Status badge component helper
   const renderStatusBadge = (status) => {
-    const s = String(status || 'draft').toLowerCase()
+    const s = String(status || 'draft').toLowerCase().replace(/[\s-]+/g, '_')
     if (s === 'approved') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
@@ -643,7 +836,7 @@ export function PRDGeneratorPage() {
         </span>
       )
     }
-    if (s === 'pending_review') {
+    if (s === 'pending_review' || s === 'in_review') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
           <AlertCircle className="w-3.5 h-3.5" />
@@ -651,7 +844,7 @@ export function PRDGeneratorPage() {
         </span>
       )
     }
-    if (s === 'rejected') {
+    if (s === 'rejected' || s === 'changes_requested') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
           <XCircle className="w-3.5 h-3.5" />
@@ -719,9 +912,9 @@ export function PRDGeneratorPage() {
             <span className="font-bold text-slate-700 dark:text-slate-300">
               Artifact Traceability:
             </span>
-            {features.find(f => f.id === activePlan.featureId) ? (
+            {(availableFeatures.find(f => f.id === activePlan.featureId) || features.find(f => f.id === activePlan.featureId)) ? (
               <span className="text-slate-600 dark:text-slate-300 flex items-center gap-1">
-                Linked to Feature: <strong className="text-brand-600 dark:text-brand-400">{features.find(f => f.id === activePlan.featureId)?.name}</strong>
+                Linked to Feature: <strong className="text-brand-600 dark:text-brand-400">{(availableFeatures.find(f => f.id === activePlan.featureId) || features.find(f => f.id === activePlan.featureId))?.name}</strong>
               </span>
             ) : (
               <span className="text-slate-400 italic">Feature Group: {activePlan.featureId || 'Standalone PRD'}</span>
@@ -977,10 +1170,20 @@ export function PRDGeneratorPage() {
                     )}
 
                     {isApproved && (
-                      <span className="text-xs text-slate-500 dark:text-slate-400 italic flex items-center gap-1">
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                        Approved by Product Manager
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          <Lock className="w-3.5 h-3.5" />
+                          Approved & Protected
+                        </span>
+                        <Button
+                          size="xs"
+                          variant="primary"
+                          icon={Calendar}
+                          onClick={() => navigate(`/roadmap?promotePrdId=${activePlan.id}`)}
+                        >
+                          Promote to Roadmap
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1034,6 +1237,7 @@ export function PRDGeneratorPage() {
                           stories={structuredStories}
                           isApproved={isApproved}
                           isSaving={isSavingStories}
+                          isRegenerating={isRegeneratingThis}
                           onSaveStories={handleSaveStories}
                           onChangeStories={handleStoriesChange}
                           onRegenerate={() => handleOpenRegenerate(key, title)}
@@ -1203,27 +1407,88 @@ export function PRDGeneratorPage() {
             </div>
           )}
 
+          {isGenerating && generationStatusMessage && (
+            <div className="p-3.5 rounded-xl bg-brand-500/10 border border-brand-500/20 text-brand-600 dark:text-brand-400 text-xs flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+              <span>{generationStatusMessage}</span>
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Select Feature to Specify *
+              Select Feature Request to Specify *
             </label>
-            <select
-              value={selectedFeatureId}
-              onChange={e => {
-                const val = e.target.value
-                setSelectedFeatureId(val)
-                const f = features.find(item => item.id === val)
-                if (f) setCustomTitle(`${f.name} Specification`)
-              }}
-              className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
-            >
-              {features.map(f => (
-                <option key={f.id} value={f.id}>
-                  {f.name} (Priority Score: {f.score?.toFixed ? f.score.toFixed(2) : f.score})
-                </option>
-              ))}
-            </select>
+            {isLoadingFeatures ? (
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin text-brand-500" />
+                Loading workspace feature requests...
+              </div>
+            ) : (availableFeatures.length === 0 && features.length === 0) ? (
+              <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400 space-y-2">
+                <p>No feature requests found in this workspace.</p>
+                <p className="text-[11px] text-amber-600 dark:text-amber-500">
+                  Import feedback and aggregate feature requests in Feature Aggregation first, or run Prioritization to evaluate demand.
+                </p>
+                <div className="flex gap-2 pt-1">
+                  <Button size="xs" variant="outline" onClick={() => navigate('/aggregation')}>
+                    Go to Feature Aggregation
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <select
+                value={selectedFeatureId}
+                onChange={e => {
+                  const val = e.target.value
+                  setSelectedFeatureId(val)
+                  const f = availableFeatures.find(item => item.id === val) || features.find(item => item.id === val)
+                  if (f) setCustomTitle(`${f.name} Specification`)
+                }}
+                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              >
+                {(availableFeatures.length > 0 ? availableFeatures : features).map(f => (
+                  <option key={f.id} value={f.id}>
+                    {f.name} {f.demandCount ? `(${f.demandCount} requests)` : ''} {f.score !== null && f.score !== undefined ? `[Score: ${typeof f.score === 'number' ? f.score.toFixed(1) : f.score}]` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
+
+          {/* Selected Feature Request Details Card */}
+          {(() => {
+            const feat = availableFeatures.find(f => f.id === selectedFeatureId) || features.find(f => f.id === selectedFeatureId)
+            if (!feat) return null
+            return (
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-navy-900/50 border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-900 dark:text-white">{feat.name}</span>
+                  <div className="flex items-center gap-1.5">
+                    {feat.tier && feat.tier !== 'Unscored' && (
+                      <Badge variant={feat.tier === 'Tier 1' || feat.tier === 'P1' ? 'purple' : 'slate'} size="xs">
+                        {feat.tier}
+                      </Badge>
+                    )}
+                    {feat.demandCount > 0 && (
+                      <Badge variant="blue" size="xs">
+                        {feat.demandCount} requests
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                {feat.description && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2">
+                    {feat.description}
+                  </p>
+                )}
+                {feat.painPoints && feat.painPoints.length > 0 && (
+                  <div className="text-[10px] text-slate-400">
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">Grounded Pain Points:</span> {feat.painPoints.slice(0, 3).join('; ')}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">

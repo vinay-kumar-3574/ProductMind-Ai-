@@ -527,7 +527,7 @@ class GenerateUserStoriesRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     workspace_id: str = Field(..., description="Target workspace ID")
-    feature_group_id: str = Field(..., description="FeatureGroup ObjectId")
+    feature_group_id: Optional[str] = Field(default=None, description="FeatureGroup ObjectId (optional if planning_id is supplied)")
     planning_id: Optional[str] = Field(default=None, description="Optional existing PRD/Planning ID to attach stories to")
     strategic_context: Optional[ProductStrategicContext] = Field(default=None)
     force_approved_overwrite: bool = Field(default=False)
@@ -612,6 +612,7 @@ class ProductPlanResponse(BaseModel):
     risk_analysis: List[RiskItem] = Field(default_factory=list)
     roadmap_recommendations: List[RoadmapPhase] = Field(default_factory=list)
     supporting_evidence: List[str] = Field(default_factory=list)
+    sections: Optional[Dict[str, Any]] = Field(default_factory=dict, description="13 canonical text sections")
     ai_metadata: Optional[Dict[str, Any]] = None
     review_notes: Optional[str] = None
     reviewed_by: Optional[str] = None

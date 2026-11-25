@@ -21,6 +21,7 @@ export function UserStoryStudio({
   stories = [],
   isApproved = false,
   isSaving = false,
+  isRegenerating = false,
   onSaveStories = () => { },
   onChangeStories = () => { },
   onRegenerate = null,
@@ -184,12 +185,12 @@ export function UserStoryStudio({
             <Button
               size="xs"
               variant="outline"
-              icon={Sparkles}
-              disabled={isApproved}
+              icon={isRegenerating ? Loader2 : Sparkles}
+              disabled={isApproved || isRegenerating}
               onClick={onRegenerate}
               title={isApproved ? 'Approved PRD is locked' : 'Regenerate user stories with AI'}
             >
-              AI Regenerate
+              {isRegenerating ? 'Generating Stories...' : 'AI Regenerate'}
             </Button>
           )}
 
@@ -389,9 +390,22 @@ export function UserStoryStudio({
             Break down this initiative into actionable agile stories with Given-When-Then acceptance criteria.
           </p>
           {!isApproved && (
-            <Button size="xs" variant="primary" icon={Plus} onClick={handleStartAdd}>
-              Add First User Story
-            </Button>
+            <div className="flex items-center justify-center gap-2">
+              <Button size="xs" variant="primary" icon={Plus} onClick={handleStartAdd}>
+                Add First User Story
+              </Button>
+              {onRegenerate && (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  icon={isRegenerating ? Loader2 : Sparkles}
+                  disabled={isRegenerating}
+                  onClick={onRegenerate}
+                >
+                  {isRegenerating ? 'Generating with AI...' : 'Generate Stories with AI'}
+                </Button>
+              )}
+            </div>
           )}
         </Card>
       ) : (

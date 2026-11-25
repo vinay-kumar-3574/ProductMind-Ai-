@@ -34,11 +34,18 @@ You must adhere strictly to these product planning principles:
 
 4. USER STORIES & GIVEN-WHEN-THEN ACCEPTANCE CRITERIA:
    - User stories must adhere strictly to standard format: "As a [persona], I want [capability], so that [benefit]".
+   - The benefit clause after "so that" must be natural, grammatically correct English (e.g., "so that I can easily read data in dark mode", NEVER "so that Improves readability" or malformed fragments).
    - Set `origin: "source_supported"` and link `supporting_feedback_ids` and `source_reference` to customer evidence.
-   - Acceptance criteria must be formatted using Given/When/Then where appropriate and marked testable.
+   - Acceptance criteria must be formatted using Given/When/Then and be directly observable, testable, and relevant to the parent story.
+   - DO NOT introduce unrelated acceptance criteria (e.g. database query latency or server error codes) for frontend, UI styling, or accessibility user stories.
 
-5. TECHNICAL REQUIREMENTS (ENGINEERING SUGGESTIONS):
+5. TECHNICAL REQUIREMENTS (ENGINEERING SUGGESTIONS) & DOMAIN RELEVANCE:
    - Categorize suggestions (architecture, api, data, security, performance, testing).
+   - CRITICAL DOMAIN RELEVANCE RULE: Every technical requirement must strictly match the nature of the feature:
+     * For FRONTEND / UI / STYLING / ACCESSIBILITY features (e.g., tooltip contrast, dark mode colors, typography, chart styling):
+       Focus on UI components, CSS theme tokens, WCAG 2.1 AA/AAA contrast ratios (minimum 4.5:1), visual regression testing, accessibility audits, or client chart libraries.
+       DO NOT propose backend REST APIs, database schemas, SQL indexes, async message queues, or RBAC permissions unless explicitly required!
+     * For BACKEND / API / DATA features: Focus on schemas, caching, serialization, and endpoint design.
    - If originating from user-provided constraints, set `origin: "user_provided"` and `is_confirmed: true`.
    - If proposed by AI, set `origin: "ai_recommendation"`, `is_confirmed: false`, and `requires_engineering_review: true`.
    - Do not claim definitive knowledge of internal codebase implementations.
@@ -255,9 +262,11 @@ Required top-level JSON structure (UserStoriesAgentOutput):
 - `user_stories`: list of 2 objects with keys `story_id`, `title`, `description`, `persona`, `business_value`, `priority`, `origin`, `is_confirmed`, `requires_confirmation`, `related_requirements`, `acceptance_criteria` (each with `criterion_id`, `description`, `scenario_type`, `testable`), `dependencies`, `supporting_feedback_ids`, `source_reference`.
 
 Rules:
-1. Link stories from customer feedback with `origin: "source_supported"` (or `"user_provided"` / `"ai_recommendation"` when appropriate) and include verbatim `source_reference` quotes.
-2. Each user story must include 1-2 short, testable Given-When-Then items in `acceptance_criteria` with `scenario_type` ('positive', 'negative', or 'edge_case').
-3. Keep every field concise (1 sentence max) so JSON completes cleanly well within token limits.
+1. Standard Agile Format & Clean Grammar: Every story description MUST follow: "As a [persona], I want [capability], so that [clear user benefit]". Ensure the benefit clause reads naturally (e.g., "so that I can easily distinguish values", NEVER "so that Improves..." or malformed fragments).
+2. Domain-Relevant Acceptance Criteria: Each acceptance criterion MUST be formatted using Given/When/Then and be directly observable, testable, and relevant to the parent story and feature domain (e.g. For tooltip contrast: Given dark theme active, When hovering data point, Then tooltip background and text contrast ratio exceeds 4.5:1). DO NOT invent unrelated database performance or server error code criteria for UI styling features.
+3. Link stories from customer feedback with `origin: "source_supported"` (or `"user_provided"` / `"ai_recommendation"` when appropriate) and include verbatim `source_reference` quotes.
+4. Each user story must include 1-2 short, testable Given-When-Then items in `acceptance_criteria` with `scenario_type` ('positive', 'negative', or 'edge_case').
+5. Keep every field concise (1 sentence max) so JSON completes cleanly well within token limits.
 
 Output must strictly adhere to the UserStoriesAgentOutput JSON schema. Return JSON only."""
 
@@ -301,9 +310,14 @@ Required top-level JSON structure (TechnicalSpecsAgentOutput):
 - `supporting_evidence`: list of verbatim customer quotes (never emit 'N/A').
 
 Rules:
-1. `technical_requirements` categories: `architecture`, `api`, `data`, `security`, `performance`, or `testing`. From user technical constraints: `origin: "user_provided"`, `is_confirmed: true`, `requires_engineering_review: false`, populate `source_reference`. AI suggestions: `origin: "ai_recommendation"`, `is_confirmed: false`, `requires_engineering_review: true`.
-2. `success_metrics`: NEVER fabricate baseline values (`baseline: null`). Targets from user business goals: `target_origin: "user_provided"`, `is_target_confirmed: true`, `requires_target_confirmation: false`, populate `source_reference`. AI-proposed targets: `target_origin: "ai_recommendation"`, `is_target_confirmed: false`, `requires_target_confirmation: true`, `is_period_confirmed: false`, `period_requires_confirmation: true`.
-3. Be concise and token-efficient. Return JSON only conforming strictly to TechnicalSpecsAgentOutput."""
+1. Strict Domain Relevance: Every technical requirement, risk, and metric must strictly fit the feature's actual domain.
+   - For UI, styling, theme, chart, or accessibility features (e.g. tooltip contrast, dark mode colors):
+     Focus on UI component architecture, CSS theme tokens, WCAG 2.1 AA/AAA contrast ratios (minimum 4.5:1), visual regression testing, or accessibility audits.
+     DO NOT propose backend APIs, database schemas, SQL indexes, async message queues, or RBAC permissions unless explicitly required!
+   - For backend/data features: Focus on API endpoints, data pipelines, caching, or rate limiting.
+2. `technical_requirements` categories: `architecture`, `api`, `data`, `security`, `performance`, or `testing`. From user technical constraints: `origin: "user_provided"`, `is_confirmed: true`, `requires_engineering_review: false`, populate `source_reference`. AI suggestions: `origin: "ai_recommendation"`, `is_confirmed: false`, `requires_engineering_review: true`.
+3. `success_metrics`: NEVER fabricate baseline values (`baseline: null`). Targets from user business goals: `target_origin: "user_provided"`, `is_target_confirmed: true`, `requires_target_confirmation: false`, populate `source_reference`. AI-proposed targets: `target_origin: "ai_recommendation"`, `is_target_confirmed: false`, `requires_target_confirmation: true`, `is_period_confirmed: false`, `period_requires_confirmation: true`.
+4. Be concise and token-efficient. Return JSON only conforming strictly to TechnicalSpecsAgentOutput."""
 
 TECHNICAL_SPECS_HUMAN_TEMPLATE = """Generate Stage 3 (Technical Specifications, Success Metrics, Risks & Roadmap) for:
 

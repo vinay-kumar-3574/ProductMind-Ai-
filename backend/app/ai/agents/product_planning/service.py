@@ -48,13 +48,77 @@ from app.repositories import (
 logger = logging.getLogger("productmind.ai.service.product_planning")
 
 
+def format_clean_user_benefit(text: str) -> str:
+    """Sanitizes customer pain points and benefit clauses into clean, natural user story grammar."""
+    cleaned = (text or "").strip()
+    lower = cleaned.lower()
+    for prefix in ["so that i can ", "so that we can ", "so that ", "in order to ", "to "]:
+        if lower.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            lower = cleaned.lower()
+            break
+    # Convert leading 3rd person verb to 1st person or infinitive
+    if lower.startswith("improves "):
+        cleaned = "improve " + cleaned[9:]
+    elif lower.startswith("enhances "):
+        cleaned = "enhance " + cleaned[9:]
+    elif lower.startswith("enables "):
+        cleaned = "enable " + cleaned[8:]
+    elif lower.startswith("reduces "):
+        cleaned = "reduce " + cleaned[8:]
+    elif lower.startswith("eliminates "):
+        cleaned = "eliminate " + cleaned[11:]
+    elif lower.startswith("allows "):
+        cleaned = "allow " + cleaned[7:]
+    
+    first_word = cleaned.split()[0].lower() if cleaned else ""
+    common_verbs = {
+        "improve", "enhance", "enable", "reduce", "eliminate", "allow", "view",
+        "see", "read", "use", "access", "navigate", "experience", "work",
+        "complete", "interact", "inspect", "resolve"
+    }
+    if first_word in common_verbs:
+        return f"I can {cleaned}"
+    elif "difficult" in lower or "hard" in lower or "poor" in lower or "cannot" in lower:
+        return f"I can easily interact with the interface without issues where {cleaned[0].lower() + cleaned[1:]}"
+    elif not cleaned.lower().startswith("i can ") and not cleaned.lower().startswith("we can "):
+        return f"I can {cleaned[0].lower() + cleaned[1:]}"
+    return cleaned
+
+
+def detect_feature_domain(title: str, description: str, pain_points: List[str]) -> str:
+    """Classifies feature into its technical domain to prevent inappropriate boilerplate."""
+    combined = f"{title} {description} {' '.join(pain_points)}".lower()
+    if any(k in combined for k in ["tooltip", "contrast", "dark mode", "theme", "color", "font", "css", "ui", "ux", "accessibility", "wcag", "chart", "visual", "layout", "button", "modal", "view"]):
+        return "ui_accessibility"
+    elif any(k in combined for k in ["export", "csv", "import", "download", "file", "excel", "report", "pdf"]):
+        return "data_export"
+    elif any(k in combined for k in ["api", "webhook", "endpoint", "integration", "rest", "graphql", "sync"]):
+        return "api_integration"
+    elif any(k in combined for k in ["auth", "login", "sso", "rbac", "permission", "security", "role", "saml"]):
+        return "auth_security"
+    return "general_capability"
+
+
 def build_prd_sections(
     prd: ProductRequirementsDocument,
     user_stories: List[UserStory],
     technical_requirements: List[TechnicalRequirement],
     roadmap_phases: List[RoadmapPhase],
+    risk_analysis: Optional[List[RiskItem]] = None,
 ) -> PRDSections:
     """Builds backward-compatible PRDSections for legacy UI/reports."""
+    risks_list = []
+    if risk_analysis:
+        for r in risk_analysis:
+            impact_str = getattr(r, "impact", "Medium")
+            likelihood_str = getattr(r, "likelihood", "Medium")
+            cat_str = getattr(r, "category", "risk").upper()
+            mit = getattr(r, "mitigation", "Follow engineering quality assurance.")
+            risks_list.append(f"- [{cat_str}] ({impact_str} Impact, {likelihood_str} Likelihood) {r.description}\n  Mitigation: {mit}")
+    elif prd.risks_and_assumptions:
+        risks_list = [f"- {r}" for r in prd.risks_and_assumptions]
+
     return PRDSections(
         overview=prd.executive_summary or "",
         problem_statement=prd.problem_statement or "",
@@ -90,7 +154,7 @@ def build_prd_sections(
             + ["Technical Suggestions:"]
             + [f"- [{t.category}] {t.title}: {t.description}" for t in technical_requirements]
         ),
-        risks_and_mitigations="\n".join(f"- {r}" for r in prd.risks_and_assumptions) if prd.risks_and_assumptions else "",
+        risks_and_mitigations="\n".join(risks_list) if risks_list else "",
         release_plan="\n\n".join(
             f"{p.phase_name}: {p.objective}\nTasks:\n"
             + "\n".join(f"  - {t}" for t in p.tasks)
@@ -352,121 +416,258 @@ class ProductPlanningService:
 
         plan_output: ProductPlanningAgentOutput = exec_result.data
 
-        # Fallback enrichment to guarantee comprehensive grounding
+        # Determine feature domain to prevent inappropriate boilerplate
+        domain = detect_feature_domain(
+            title=feature_group.title,
+            description=feature_group.description or getattr(feature_group, "feature_summary", "") or "",
+            pain_points=feature_group.pain_points or [],
+        )
+
+        # Fallback enrichment: domain-relevant, evidence-grounded specifications
         if not plan_output.prd.functional_requirements:
             first_pain = feature_group.pain_points[0] if feature_group.pain_points else "Customer feature request"
             quote_ref = getattr(feature_group, "evidence", [])[0] if getattr(feature_group, "evidence", []) else None
-            plan_output.prd.functional_requirements = [
-                ProductRequirement(
-                    requirement_id="REQ-001",
-                    title=f"Core {feature_group.title} Functionality",
-                    description=f"Provide end-to-end user capability for {feature_group.title.lower()} directly resolving customer pain: {first_pain}.",
-                    origin=RequirementOrigin.SOURCE_SUPPORTED,
-                    is_confirmed=True,
-                    requires_confirmation=False,
-                    source_reference=quote_ref or first_pain,
-                ),
-                ProductRequirement(
-                    requirement_id="REQ-002",
-                    title="Workspace Security & Role Permissions",
-                    description="Enforce workspace boundary validation and role-based permissions on all related actions.",
-                    origin=RequirementOrigin.USER_PROVIDED if (request.strategic_context and request.strategic_context.additional_planning_instructions) else RequirementOrigin.AI_RECOMMENDATION,
-                    is_confirmed=bool(request.strategic_context and request.strategic_context.additional_planning_instructions),
-                    requires_confirmation=not bool(request.strategic_context and request.strategic_context.additional_planning_instructions),
-                    source_reference=request.strategic_context.additional_planning_instructions if (request.strategic_context and request.strategic_context.additional_planning_instructions) else None,
-                ),
-            ]
+
+            if domain == "ui_accessibility":
+                plan_output.prd.functional_requirements = [
+                    ProductRequirement(
+                        requirement_id="REQ-001",
+                        title=f"High-Contrast Styling & Theming for {feature_group.title}",
+                        description=f"Provide high-contrast styling and theme-aware rendering for {feature_group.title.lower()} directly resolving customer pain: {first_pain}.",
+                        origin=RequirementOrigin.SOURCE_SUPPORTED,
+                        is_confirmed=True,
+                        requires_confirmation=False,
+                        source_reference=quote_ref or first_pain,
+                    ),
+                    ProductRequirement(
+                        requirement_id="REQ-002",
+                        title="WCAG 2.1 AA Contrast Compliance & Visual Verification",
+                        description=f"Ensure {feature_group.title.lower()} satisfies minimum 4.5:1 contrast ratio standards across both dark and light theme palettes.",
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                        requires_confirmation=True,
+                    ),
+                ]
+            elif domain == "data_export":
+                plan_output.prd.functional_requirements = [
+                    ProductRequirement(
+                        requirement_id="REQ-001",
+                        title=f"Filtered Data Extraction for {feature_group.title}",
+                        description=f"Provide data extraction and download capabilities for {feature_group.title.lower()} resolving customer pain: {first_pain}.",
+                        origin=RequirementOrigin.SOURCE_SUPPORTED,
+                        is_confirmed=True,
+                        requires_confirmation=False,
+                        source_reference=quote_ref or first_pain,
+                    ),
+                    ProductRequirement(
+                        requirement_id="REQ-002",
+                        title="Encoding & File Integrity Verification",
+                        description="Ensure exported files use standard UTF-8 formatting and match active UI filter parameters.",
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                        requires_confirmation=True,
+                    ),
+                ]
+            else:
+                plan_output.prd.functional_requirements = [
+                    ProductRequirement(
+                        requirement_id="REQ-001",
+                        title=f"Core Workflow Capabilities for {feature_group.title}",
+                        description=f"Provide end-to-end functionality for {feature_group.title.lower()} directly resolving customer pain: {first_pain}.",
+                        origin=RequirementOrigin.SOURCE_SUPPORTED,
+                        is_confirmed=True,
+                        requires_confirmation=False,
+                        source_reference=quote_ref or first_pain,
+                    ),
+                    ProductRequirement(
+                        requirement_id="REQ-002",
+                        title=f"State Feedback & Validation for {feature_group.title}",
+                        description=f"Provide responsive interaction states and clear user notifications throughout {feature_group.title.lower()} workflows.",
+                        origin=RequirementOrigin.USER_PROVIDED if (request.strategic_context and request.strategic_context.additional_planning_instructions) else RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=bool(request.strategic_context and request.strategic_context.additional_planning_instructions),
+                        requires_confirmation=not bool(request.strategic_context and request.strategic_context.additional_planning_instructions),
+                        source_reference=request.strategic_context.additional_planning_instructions if (request.strategic_context and request.strategic_context.additional_planning_instructions) else None,
+                    ),
+                ]
 
         if not plan_output.prd.non_functional_requirements:
-            plan_output.prd.non_functional_requirements = [
-                ProductRequirement(
-                    requirement_id="NFR-001",
-                    title="Response Latency & Execution Speed",
-                    description="Execution latency target for operations to be benchmarked and finalized by engineering review.",
-                    origin=RequirementOrigin.AI_RECOMMENDATION,
-                    is_confirmed=False,
-                    requires_confirmation=True,
-                    numerical_threshold=None,  # Zero-fabrication: ungrounded thresholds MUST be None!
-                    source_reference=None,
-                ),
-                ProductRequirement(
-                    requirement_id="NFR-002",
-                    title="Service Availability & Uptime Target",
-                    description="Service availability SLA to be defined according to corporate infrastructure tiers.",
-                    origin=RequirementOrigin.AI_RECOMMENDATION,
-                    is_confirmed=False,
-                    requires_confirmation=True,
-                    numerical_threshold=None,  # Zero-fabrication: ungrounded SLA MUST be None!
-                    source_reference=None,
-                ),
-            ]
+            if domain == "ui_accessibility":
+                plan_output.prd.non_functional_requirements = [
+                    ProductRequirement(
+                        requirement_id="NFR-001",
+                        title="Visual Rendering Performance & Smoothness",
+                        description=f"UI transitions and hover states for {feature_group.title.lower()} must render smoothly without visual flicker or layout shift.",
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                        requires_confirmation=True,
+                        numerical_threshold=None,
+                        source_reference=None,
+                    ),
+                    ProductRequirement(
+                        requirement_id="NFR-002",
+                        title="Theme Consistency & Visual Regression Baseline",
+                        description=f"Visual contrast and layout for {feature_group.title.lower()} to be verified by automated regression across display modes.",
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                        requires_confirmation=True,
+                        numerical_threshold=None,
+                        source_reference=None,
+                    ),
+                ]
+            else:
+                plan_output.prd.non_functional_requirements = [
+                    ProductRequirement(
+                        requirement_id="NFR-001",
+                        title="Response Latency & Execution Speed",
+                        description="Execution latency target for operations to be benchmarked and finalized by engineering review.",
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                        requires_confirmation=True,
+                        numerical_threshold=None,
+                        source_reference=None,
+                    ),
+                    ProductRequirement(
+                        requirement_id="NFR-002",
+                        title="Service Availability & Reliability",
+                        description="Service availability SLA to be defined according to corporate infrastructure tiers.",
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                        requires_confirmation=True,
+                        numerical_threshold=None,
+                        source_reference=None,
+                    ),
+                ]
 
         if not plan_output.user_stories:
             first_pain = feature_group.pain_points[0] if feature_group.pain_points else "address customer requests"
             quote_ref = getattr(feature_group, "evidence", [])[0] if getattr(feature_group, "evidence", []) else None
             req_ids = [r.requirement_id if hasattr(r, "requirement_id") else str(r) for r in plan_output.prd.functional_requirements[:2]]
-            plan_output.user_stories = [
-                UserStory(
-                    story_id="US-001",
-                    title=f"Core Workflow for {feature_group.title}",
-                    description=f"As a platform user, I want {feature_group.title.lower()}, so that I can {first_pain.lower()}.",
-                    persona="Platform User",
-                    business_value=f"Directly resolves key customer pain point: {first_pain}",
-                    priority="High",
-                    origin=RequirementOrigin.SOURCE_SUPPORTED,
-                    is_confirmed=True,
-                    requires_confirmation=False,
-                    source_reference=quote_ref or first_pain,
-                    related_requirements=req_ids,
-                    acceptance_criteria=[
-                        AcceptanceCriterion(
-                            criterion_id="AC-001",
-                            description=f"Given authenticated user on {feature_group.title} view, When action is triggered, Then operation completes successfully",
-                            scenario_type="positive",
-                            testable=True,
-                            origin=RequirementOrigin.SOURCE_SUPPORTED,
-                            is_confirmed=True,
-                            requires_confirmation=False,
-                            related_story_id="US-001",
-                        ),
-                        AcceptanceCriterion(
-                            criterion_id="AC-002",
-                            description=f"Given invalid request inputs, When submitted, Then system displays clear error validation message",
-                            scenario_type="negative",
-                            testable=True,
-                            origin=RequirementOrigin.AI_RECOMMENDATION,
-                            is_confirmed=False,
-                            requires_confirmation=True,
-                            related_story_id="US-001",
-                        ),
-                    ],
-                    supporting_feedback_ids=[str(fid) for fid in getattr(feature_group, "related_feedback_ids", [])[:3]],
-                ),
-                UserStory(
-                    story_id="US-002",
-                    title=f"Configuration & Permissions for {feature_group.title}",
-                    description=f"As a team administrator, I want to manage access settings for {feature_group.title.lower()}, so that data access conforms to company policy.",
-                    persona="Workspace Administrator",
-                    business_value="Ensures governance, compliance, and enterprise access control",
-                    priority="Medium",
-                    origin=RequirementOrigin.USER_PROVIDED if (request.strategic_context and request.strategic_context.additional_planning_instructions) else RequirementOrigin.AI_RECOMMENDATION,
-                    is_confirmed=bool(request.strategic_context and request.strategic_context.additional_planning_instructions),
-                    requires_confirmation=not bool(request.strategic_context and request.strategic_context.additional_planning_instructions),
-                    source_reference=request.strategic_context.additional_planning_instructions if (request.strategic_context and request.strategic_context.additional_planning_instructions) else None,
-                    acceptance_criteria=[
-                        AcceptanceCriterion(
-                            criterion_id="AC-003",
-                            description="Given admin user, When permissions are updated, Then changes take effect immediately across workspace members",
-                            scenario_type="positive",
-                            testable=True,
-                            origin=RequirementOrigin.AI_RECOMMENDATION,
-                            is_confirmed=False,
-                            requires_confirmation=True,
-                            related_story_id="US-002",
-                        )
-                    ],
-                ),
-            ]
+
+            if domain == "ui_accessibility":
+                plan_output.user_stories = [
+                    UserStory(
+                        story_id="US-001",
+                        title=f"Dark Mode Readability for {feature_group.title}",
+                        description=f"As a dashboard user, I want {feature_group.title.lower()}, so that {format_clean_user_benefit(first_pain)}.",
+                        persona="Dashboard User",
+                        business_value=f"Directly resolves customer visibility pain point: {first_pain}",
+                        priority="High",
+                        origin=RequirementOrigin.SOURCE_SUPPORTED,
+                        is_confirmed=True,
+                        requires_confirmation=False,
+                        source_reference=quote_ref or first_pain,
+                        related_requirements=req_ids,
+                        acceptance_criteria=[
+                            AcceptanceCriterion(
+                                criterion_id="AC-001",
+                                description=f"Given dark theme is active, When viewing {feature_group.title.lower()}, Then visual elements display with clear contrast exceeding 4.5:1 ratio",
+                                scenario_type="positive",
+                                testable=True,
+                                origin=RequirementOrigin.SOURCE_SUPPORTED,
+                                is_confirmed=True,
+                                requires_confirmation=False,
+                                related_story_id="US-001",
+                            ),
+                            AcceptanceCriterion(
+                                criterion_id="AC-002",
+                                description=f"Given custom theme settings, When switching theme modes, Then {feature_group.title.lower()} updates dynamically without visual artifacts",
+                                scenario_type="positive",
+                                testable=True,
+                                origin=RequirementOrigin.AI_RECOMMENDATION,
+                                is_confirmed=False,
+                                requires_confirmation=True,
+                                related_story_id="US-001",
+                            ),
+                        ],
+                        supporting_feedback_ids=[str(fid) for fid in getattr(feature_group, "related_feedback_ids", [])[:3]],
+                    ),
+                    UserStory(
+                        story_id="US-002",
+                        title=f"Visual Hierarchy & Contrast Clarity for {feature_group.title}",
+                        description=f"As an analyst with visual sensitivity, I want distinct border separation and clear typography for {feature_group.title.lower()}, so that I can interpret metrics effortlessly.",
+                        persona="Data Analyst",
+                        business_value="Enhances accessibility compliance and visual hierarchy across charting components",
+                        priority="Medium",
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                        requires_confirmation=True,
+                        acceptance_criteria=[
+                            AcceptanceCriterion(
+                                criterion_id="AC-003",
+                                description=f"Given dense chart elements, When {feature_group.title.lower()} is active, Then text and borders remain distinctly legible against adjacent series",
+                                scenario_type="positive",
+                                testable=True,
+                                origin=RequirementOrigin.AI_RECOMMENDATION,
+                                is_confirmed=False,
+                                requires_confirmation=True,
+                                related_story_id="US-002",
+                            )
+                        ],
+                    ),
+                ]
+            else:
+                plan_output.user_stories = [
+                    UserStory(
+                        story_id="US-001",
+                        title=f"Core Workflow for {feature_group.title}",
+                        description=f"As a platform user, I want {feature_group.title.lower()}, so that {format_clean_user_benefit(first_pain)}.",
+                        persona="Platform User",
+                        business_value=f"Directly resolves key customer pain point: {first_pain}",
+                        priority="High",
+                        origin=RequirementOrigin.SOURCE_SUPPORTED,
+                        is_confirmed=True,
+                        requires_confirmation=False,
+                        source_reference=quote_ref or first_pain,
+                        related_requirements=req_ids,
+                        acceptance_criteria=[
+                            AcceptanceCriterion(
+                                criterion_id="AC-001",
+                                description=f"Given authenticated user on {feature_group.title} view, When action is triggered, Then operation completes successfully",
+                                scenario_type="positive",
+                                testable=True,
+                                origin=RequirementOrigin.SOURCE_SUPPORTED,
+                                is_confirmed=True,
+                                requires_confirmation=False,
+                                related_story_id="US-001",
+                            ),
+                            AcceptanceCriterion(
+                                criterion_id="AC-002",
+                                description=f"Given invalid request inputs, When submitted, Then system displays clear error validation message",
+                                scenario_type="negative",
+                                testable=True,
+                                origin=RequirementOrigin.AI_RECOMMENDATION,
+                                is_confirmed=False,
+                                requires_confirmation=True,
+                                related_story_id="US-001",
+                            ),
+                        ],
+                        supporting_feedback_ids=[str(fid) for fid in getattr(feature_group, "related_feedback_ids", [])[:3]],
+                    ),
+                    UserStory(
+                        story_id="US-002",
+                        title=f"Interaction Feedback for {feature_group.title}",
+                        description=f"As a regular user, I want clear feedback during {feature_group.title.lower()} interactions, so that I can understand system state at all times.",
+                        persona="Platform User",
+                        business_value="Enhances user confidence and workflow transparency",
+                        priority="Medium",
+                        origin=RequirementOrigin.USER_PROVIDED if (request.strategic_context and request.strategic_context.additional_planning_instructions) else RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=bool(request.strategic_context and request.strategic_context.additional_planning_instructions),
+                        requires_confirmation=not bool(request.strategic_context and request.strategic_context.additional_planning_instructions),
+                        source_reference=request.strategic_context.additional_planning_instructions if (request.strategic_context and request.strategic_context.additional_planning_instructions) else None,
+                        acceptance_criteria=[
+                            AcceptanceCriterion(
+                                criterion_id="AC-003",
+                                description="Given user action initiated, When processing occurs, Then system presents progress indicators without blocking navigation",
+                                scenario_type="positive",
+                                testable=True,
+                                origin=RequirementOrigin.AI_RECOMMENDATION,
+                                is_confirmed=False,
+                                requires_confirmation=True,
+                                related_story_id="US-002",
+                            )
+                        ],
+                    ),
+                ]
 
         if not plan_output.technical_requirements:
             tech_items = []
@@ -485,28 +686,76 @@ class ProductPlanningService:
                             source_reference=f"User technical constraint: {c}",
                         )
                     )
-            tech_items.extend([
-                TechnicalRequirement(
-                    title=f"API Service Integration for {feature_group.title}",
-                    description=f"Develop secure REST endpoints supporting pagination, rate limiting, and serialization for {feature_group.title}.",
-                    category="api",
-                    rationale="Enables frontend and integration consumers with resilient access.",
-                    confidence=0.9,
-                    requires_engineering_review=True,
-                    origin=RequirementOrigin.AI_RECOMMENDATION,
-                    is_confirmed=False,
-                ),
-                TechnicalRequirement(
-                    title="Data Validation and RBAC Enforcement",
-                    description="Implement server-side validation and ensure workspace tenant isolation on all operations.",
-                    category="security",
-                    rationale="Protects workspace boundary and prevents unauthorized access.",
-                    confidence=0.95,
-                    requires_engineering_review=True,
-                    origin=RequirementOrigin.AI_RECOMMENDATION,
-                    is_confirmed=False,
-                ),
-            ])
+
+            if domain == "ui_accessibility":
+                tech_items.extend([
+                    TechnicalRequirement(
+                        title=f"Theme Tokens & Contrast Verification for {feature_group.title}",
+                        description="Implement CSS custom properties for background, text, and border with automated WCAG contrast checks.",
+                        category="architecture",
+                        rationale="Ensures consistent dark-mode styling and accessibility across dashboard components.",
+                        confidence=0.95,
+                        requires_engineering_review=True,
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                    ),
+                    TechnicalRequirement(
+                        title=f"Visual Regression Testing & Component Verification",
+                        description=f"Add visual regression snapshot tests across light and dark modes for {feature_group.title.lower()}.",
+                        category="testing",
+                        rationale="Prevents visual regressions and display clipping across charting variants.",
+                        confidence=0.9,
+                        requires_engineering_review=True,
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                    ),
+                ])
+            elif domain == "data_export":
+                tech_items.extend([
+                    TechnicalRequirement(
+                        title=f"Streaming Data Serializer for {feature_group.title}",
+                        description="Implement chunked streaming serialization to handle variable dataset export volumes efficiently.",
+                        category="data",
+                        rationale="Prevents client-side memory exhaustion during large report generation.",
+                        confidence=0.9,
+                        requires_engineering_review=True,
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                    ),
+                    TechnicalRequirement(
+                        title="File Encoding & Header Specifications",
+                        description="Configure UTF-8 encoding with BOM and standard Content-Disposition attachment headers.",
+                        category="api",
+                        rationale="Ensures cross-application compatibility with Excel and CSV spreadsheet viewers.",
+                        confidence=0.95,
+                        requires_engineering_review=True,
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                    ),
+                ])
+            else:
+                tech_items.extend([
+                    TechnicalRequirement(
+                        title=f"Component Architecture for {feature_group.title}",
+                        description=f"Structure modular frontend and state management bindings for {feature_group.title}.",
+                        category="architecture",
+                        rationale="Enables maintainable integration with existing workspace views.",
+                        confidence=0.9,
+                        requires_engineering_review=True,
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                    ),
+                    TechnicalRequirement(
+                        title="Automated Test Suite & Verification",
+                        description=f"Implement unit and integration test coverage for {feature_group.title.lower()} workflows.",
+                        category="testing",
+                        rationale="Guarantees behavioral stability across workspace environments.",
+                        confidence=0.95,
+                        requires_engineering_review=True,
+                        origin=RequirementOrigin.AI_RECOMMENDATION,
+                        is_confirmed=False,
+                    ),
+                ])
             plan_output.technical_requirements = tech_items
 
         if not plan_output.supporting_evidence:
@@ -798,19 +1047,31 @@ class ProductPlanningService:
         """Generates or regenerates specifically user stories and acceptance criteria."""
         await self.verify_workspace_access(user, request.workspace_id)
         ws_oid = ObjectId(request.workspace_id)
-        fg_oid = ObjectId(request.feature_group_id)
 
         if not self.feature_group_repo or not self.prd_repo:
             raise HTTPException(status_code=500, detail="Repositories uninitialized")
 
+        # Resolve existing PRD first if planning_id provided
+        existing_prd = None
+        if request.planning_id and ObjectId.is_valid(request.planning_id):
+            existing_prd = await self.prd_repo.find_by_id(ObjectId(request.planning_id), workspace_id=ws_oid)
+
+        fg_id_str = request.feature_group_id
+        if not fg_id_str and existing_prd and existing_prd.feature_group_id:
+            fg_id_str = str(existing_prd.feature_group_id)
+
+        if not fg_id_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="feature_group_id is required or must be resolvable from planning_id",
+            )
+
+        fg_oid = ObjectId(fg_id_str)
         feature_group = await self.feature_group_repo.find_by_id(fg_oid, workspace_id=ws_oid)
         if not feature_group:
             raise HTTPException(status_code=404, detail="FeatureGroup not found")
 
-        # Check existing PRD
-        existing_prd = None
-        if request.planning_id and ObjectId.is_valid(request.planning_id):
-            existing_prd = await self.prd_repo.find_by_id(ObjectId(request.planning_id), workspace_id=ws_oid)
+        # Check existing PRD if not already looked up
         if not existing_prd:
             existing_prd = await self.prd_repo.find_by_feature_group(ws_oid, fg_oid)
 
@@ -838,16 +1099,35 @@ class ProductPlanningService:
         if existing_prd and existing_prd.id:
             # Rebuild sections with new user stories
             prd_obj = ProductRequirementsDocument(**existing_prd.structured_prd) if existing_prd.structured_prd else None
+            tech_reqs = [TechnicalRequirement(**t) for t in (existing_prd.technical_requirements or [])]
+            phases = [RoadmapPhase(**p) for p in (existing_prd.roadmap_recommendations or [])]
+
             if prd_obj:
-                tech_reqs = [TechnicalRequirement(**t) for t in existing_prd.technical_requirements]
-                phases = [RoadmapPhase(**p) for p in existing_prd.roadmap_recommendations]
                 sections_obj = build_prd_sections(prd_obj, stories, tech_reqs, phases)
                 update_dict = {
                     "userStories": stories_dict,
                     "sections": sections_obj.model_dump(by_alias=True),
                 }
             else:
-                update_dict = {"userStories": stories_dict}
+                formatted_stories = "\n\n".join(
+                    f"### {s.story_id}: {s.title} ({s.priority})\n**As a** {s.persona}, **I want** {s.description}, **so that** {s.business_value}."
+                    for s in stories
+                )
+                formatted_ac = "\n\n".join(
+                    f"#### For {s.story_id} ({s.title}):\n" + (
+                        "\n".join(f"- **{c.criterion_id}**: {c.description}" for c in getattr(s, "acceptance_criteria", []))
+                        if hasattr(s, "acceptance_criteria") and s.acceptance_criteria
+                        else "- Standard verification applies"
+                    )
+                    for s in stories
+                )
+                sec_dict = dict(existing_prd.sections.model_dump(by_alias=True) if hasattr(existing_prd.sections, "model_dump") else (existing_prd.sections or {}))
+                sec_dict["userStories"] = formatted_stories
+                sec_dict["acceptanceCriteria"] = formatted_ac
+                update_dict = {
+                    "userStories": stories_dict,
+                    "sections": sec_dict,
+                }
 
             saved = await self.prd_repo.update(existing_prd.id, update_dict, workspace_id=ws_oid)
         else:
@@ -1595,6 +1875,19 @@ class ProductPlanningService:
                 except Exception:
                     pass
 
+        sections_dict: Dict[str, Any] = {}
+        if prd.sections:
+            if hasattr(prd.sections, "model_dump"):
+                sections_dict = prd.sections.model_dump(by_alias=True)
+            elif isinstance(prd.sections, dict):
+                sections_dict = prd.sections
+        elif prd_model:
+            try:
+                sec_obj = build_prd_sections(prd_model, user_stories, tech_reqs, roadmap)
+                sections_dict = sec_obj.model_dump(by_alias=True)
+            except Exception as e:
+                logger.warning("Failed to build fallback PRD sections: %s", e)
+
         status_val = prd.status.value if hasattr(prd.status, "value") else str(prd.status)
 
         return ProductPlanResponse(
@@ -1612,6 +1905,7 @@ class ProductPlanningService:
             risk_analysis=risks,
             roadmap_recommendations=roadmap,
             supporting_evidence=prd.supporting_evidence or [],
+            sections=sections_dict,
             ai_metadata=prd.ai_metadata,
             review_notes=prd.review_notes,
             reviewed_by=str(prd.reviewed_by) if prd.reviewed_by else None,
