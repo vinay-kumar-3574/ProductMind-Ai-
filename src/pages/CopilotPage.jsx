@@ -17,7 +17,7 @@ import {
   RefreshCw,
   FolderOpen,
 } from 'lucide-react'
-import { Card, Button } from '../components/common'
+import { Card, Button, MarkdownRenderer } from '../components/common'
 
 function generateRequestId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -223,6 +223,35 @@ export function CopilotPage() {
       setInputText('')
     }
 
+    // Immediately render the user's message optimistically in the active conversation
+    const optimisticUserMsg = {
+      id: `temp-${effectiveRequestId}`,
+      role: 'user',
+      content: trimmed,
+      createdAt: new Date().toISOString(),
+      status: 'sending',
+      requestId: effectiveRequestId,
+    }
+
+    setMessages((prev) => {
+      const existingIndex = prev.findIndex(
+        (m) =>
+          m.id === `temp-${effectiveRequestId}` ||
+          (m.requestId && m.requestId === effectiveRequestId)
+      )
+      if (existingIndex >= 0) {
+        const updated = [...prev]
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          content: trimmed,
+          status: 'sending',
+          errorMessage: null,
+        }
+        return updated
+      }
+      return [...prev, optimisticUserMsg]
+    })
+
     try {
       const result = await copilotService.sendMessage({
         workspaceId: wsIdAtSend,
@@ -258,7 +287,14 @@ export function CopilotPage() {
 
       if (sameConvView) {
         setMessages((prev) => {
-          const next = [...prev]
+          // Remove the temporary user message and replace with confirmed user message,
+          // then append the assistant message, preventing any duplicates
+          const filtered = prev.filter(
+            (m) =>
+              m.id !== `temp-${effectiveRequestId}` &&
+              m.requestId !== effectiveRequestId
+          )
+          const next = [...filtered]
           for (const msg of [result.userMessage, result.assistantMessage]) {
             if (!msg) continue
             const idx = next.findIndex((m) => m.id === msg.id)
@@ -284,6 +320,14 @@ export function CopilotPage() {
         error: errMsg,
         status: err?.status || 500,
       })
+      // Keep the user's submitted message in the stream, marked as failed, so it is never lost
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === `temp-${effectiveRequestId}` || m.requestId === effectiveRequestId
+            ? { ...m, status: 'failed', errorMessage: errMsg }
+            : m
+        )
+      )
     } finally {
       inFlightSendRef.current = false
       setIsSending(false)
@@ -463,23 +507,41 @@ export function CopilotPage() {
                     <div
                       className={`max-w-[85%] rounded-2xl p-3.5 text-xs leading-relaxed ${
                         isUser
-                          ? 'bg-brand-600 text-white rounded-tr-none'
-                          : 'bg-slate-100 dark:bg-navy-950 text-slate-800 dark:text-slate-200 border border-slate-200/80 dark:border-slate-800 rounded-tl-none whitespace-pre-line'
+                          ? isFailed
+                            ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-800 rounded-tr-none'
+                            : 'bg-brand-600 text-white rounded-tr-none'
+                          : 'bg-slate-100 dark:bg-navy-950 text-slate-800 dark:text-slate-200 border border-slate-200/80 dark:border-slate-800 rounded-tl-none'
                       }`}
                     >
                       {isFailed ? (
                         <div className="space-y-1 text-rose-600 dark:text-rose-400">
-                          <div className="flex items-center gap-1.5 font-semibold">
-                            <AlertTriangle className="w-4 h-4 shrink-0" />
-                            <span>Generation Failed</span>
-                          </div>
-                          <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                            {msg.errorMessage || 'Unable to generate response.'}
-                          </p>
+                          {isUser ? (
+                            <>
+                              <p className="whitespace-pre-wrap">{msg.content}</p>
+                              <div className="flex items-center gap-1 font-semibold text-rose-500 pt-1 text-[10px]">
+                                <AlertTriangle className="w-3 h-3 shrink-0" />
+                                <span>Message not delivered</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-1.5 font-semibold">
+                                <AlertTriangle className="w-4 h-4 shrink-0" />
+                                <span>Generation Failed</span>
+                              </div>
+                              <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                                {msg.errorMessage || 'Unable to generate response.'}
+                              </p>
+                            </>
+                          )}
                         </div>
                       ) : (
                         <>
-                          <p>{msg.content}</p>
+                          {isUser ? (
+                            <p className="whitespace-pre-wrap">{msg.content}</p>
+                          ) : (
+                            <MarkdownRenderer content={msg.content} />
+                          )}
                           {msg.evidence && msg.evidence.length > 0 && (
                             <div className="mt-3 pt-2.5 border-t border-slate-200/60 dark:border-slate-800/80">
                               <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block mb-1.5">
@@ -511,11 +573,22 @@ export function CopilotPage() {
                       <div
                         className={`flex items-center justify-between text-[10px] mt-2 pt-1.5 border-t ${
                           isUser
-                            ? 'border-brand-500/50 text-brand-200'
+                            ? isFailed
+                              ? 'border-rose-200 dark:border-rose-800 text-rose-500'
+                              : 'border-brand-500/50 text-brand-200'
                             : 'border-slate-200/60 dark:border-slate-800 text-slate-400'
                         }`}
                       >
-                        <span>{formatMessageTime(msg.createdAt)}</span>
+                        <span>
+                          {msg.status === 'sending' ? (
+                            <span className="inline-flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-brand-200 animate-ping" />
+                              Sending...
+                            </span>
+                          ) : (
+                            formatMessageTime(msg.createdAt)
+                          )}
+                        </span>
                         {!isUser && !isFailed && (
                           <button
                             onClick={() => copyMessage(msg.content)}

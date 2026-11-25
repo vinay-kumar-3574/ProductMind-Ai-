@@ -12,6 +12,8 @@ vi.mock('../services/api/apiClient', () => ({
     delete: vi.fn(),
   },
   getActiveWorkspaceId: vi.fn(() => 'ws-unit-789'),
+  getAuthToken: vi.fn(() => 'mock-test-token'),
+  getApiBaseUrl: vi.fn(() => 'http://localhost:8000'),
 }))
 
 describe('reportingService (Phase 7)', () => {
@@ -136,6 +138,54 @@ describe('reportingService (Phase 7)', () => {
         expect.objectContaining({ workspaceId: 'ws-test', timeRange: '30d' })
       )
       expect(res.executiveSummary).toContain('Positive sentiment')
+    })
+  })
+
+  describe('Report Export', () => {
+    it('downloads JSON report', async () => {
+      const mockJson = { workspaceId: 'ws-test', format: 'json' }
+      global.fetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => mockJson,
+      })
+      window.URL.createObjectURL = vi.fn(() => 'blob:mock-url')
+      window.URL.revokeObjectURL = vi.fn()
+
+      const res = await reportingService.exportReport({
+        workspaceId: 'ws-test',
+        format: 'json',
+        timeRange: '30d',
+      })
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/reports/export?workspaceId=ws-test&format=json&timeRange=30d'),
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer mock-test-token' }) })
+      )
+      expect(res.data.workspaceId).toBe('ws-test')
+    })
+
+    it('downloads CSV report', async () => {
+      const mockBlob = new Blob(['Metric,Score'], { type: 'text/csv' })
+      global.fetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        blob: async () => mockBlob,
+      })
+      window.URL.createObjectURL = vi.fn(() => 'blob:mock-url')
+      window.URL.revokeObjectURL = vi.fn()
+
+      const res = await reportingService.exportReport({
+        workspaceId: 'ws-test',
+        format: 'csv',
+        timeRange: '30d',
+      })
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/reports/export?workspaceId=ws-test&format=csv&timeRange=30d'),
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer mock-test-token' }) })
+      )
+      expect(res.success).toBe(true)
     })
   })
 })

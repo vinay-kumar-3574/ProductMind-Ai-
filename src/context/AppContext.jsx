@@ -57,6 +57,27 @@ export function AppProvider({ children }) {
   useEffect(() => { safeSet(STORAGE_KEYS.SAVED_VIEWS, savedViews) }, [savedViews])
   useEffect(() => { safeSet(STORAGE_KEYS.DASHBOARD_LAYOUT, dashboardLayout) }, [dashboardLayout])
 
+  // Invalidate stale domain state upon workspace change to ensure strict tenant isolation
+  useEffect(() => {
+    const handleWorkspaceChange = (e) => {
+      const newWsId = e?.detail?.workspaceId
+      if (newWsId && isBackendConfigured()) {
+        setFeedback([])
+        setFeatures([])
+        setPrds([])
+        setRoadmap([])
+      }
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pmai:workspace_changed', handleWorkspaceChange)
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pmai:workspace_changed', handleWorkspaceChange)
+      }
+    }
+  }, [])
+
   // Toast notifier
   const addToast = (message, type = 'info', undoAction = null) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`

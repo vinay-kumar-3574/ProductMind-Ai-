@@ -121,3 +121,4 @@ export {
   EmptyState,
   AIClassificationCard,
 } from './ApiStatus'
+export { MarkdownRenderer } from './MarkdownRenderer'

@@ -94,7 +94,7 @@ def _to_report_response(saved: SavedReport) -> SavedReportResponse:
 )
 async def get_executive_summary(
     workspace_id: str = Query(..., alias="workspaceId"),
-    time_range: Optional[Literal["7d", "30d", "90d", "all"]] = Query(
+    time_range: Optional[Literal["7d", "30d", "90d", "quarter", "all"]] = Query(
         default="30d", alias="timeRange"
     ),
     start_date: Optional[date] = Query(default=None, alias="startDate"),
@@ -339,7 +339,7 @@ async def delete_saved_report(
 async def export_report(
     workspace_id: str = Query(..., alias="workspaceId"),
     format: Literal["json", "csv"] = Query(default="json"),
-    time_range: Optional[Literal["7d", "30d", "90d", "all"]] = Query(
+    time_range: Optional[Literal["7d", "30d", "90d", "quarter", "all"]] = Query(
         default="30d", alias="timeRange"
     ),
     current_user: User = Depends(get_current_user),

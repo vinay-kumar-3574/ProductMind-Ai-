@@ -33,6 +33,10 @@ import {
 import { exportFeedbackToCSV, exportFeaturesToCSV } from '../services/csvService'
 import { orchestratorService } from '../services/api/orchestratorService'
 import { reportingService } from '../services/api/reportingService'
+import { aggregationService } from '../services/api/aggregationService'
+import { feedbackService } from '../services/api/feedbackService'
+import { prdService } from '../services/api/prdService'
+import { roadmapService } from '../services/api/roadmapService'
 import { useWorkspace } from '../context/WorkspaceContext'
 import {
   Brain,
@@ -73,6 +77,7 @@ export function DashboardPage() {
     setPresentationModeActive,
     dashboardLayout,
     setDashboardLayout,
+    addToast,
   } = useApp()
 
   const { currentWorkspace } = useWorkspace()
@@ -87,25 +92,112 @@ export function DashboardPage() {
   const [executiveSummary, setExecutiveSummary] = useState(null)
   const [isLoadingSummary, setIsLoadingSummary] = useState(false)
 
+  // Direct Atlas backend-grounded states for active workspace
+  const [backendFeatures, setBackendFeatures] = useState(null)
+  const [backendFeedback, setBackendFeedback] = useState(null)
+  const [backendPrds, setBackendPrds] = useState(null)
+  const [backendRoadmap, setBackendRoadmap] = useState(null)
+  const [isLoadingDashboardData, setIsLoadingDashboardData] = useState(false)
+  const [dashboardDataError, setDashboardDataError] = useState(null)
+  const [isExportingReport, setIsExportingReport] = useState(false)
+
+  // Calculate calendar-quarter dates
+  const calendarQuarter = useMemo(() => {
+    const now = new Date()
+    const q = Math.floor(now.getMonth() / 3)
+    const qStart = new Date(now.getFullYear(), q * 3, 1)
+    const qEnd = new Date(now.getFullYear(), (q + 1) * 3, 0)
+    return {
+      quarterNum: q + 1,
+      startDate: qStart.toISOString().split('T')[0],
+      endDate: qEnd.toISOString().split('T')[0],
+    }
+  }, [])
+
+  // Workspace-isolated live data synchronization
   useEffect(() => {
-    if (!currentWorkspace?.id) return
+    if (!currentWorkspace?.id) {
+      setBackendFeatures(null)
+      setBackendFeedback(null)
+      setBackendPrds(null)
+      setBackendRoadmap(null)
+      setExecutiveSummary(null)
+      return
+    }
+
     let isCancelled = false
+    setIsLoadingDashboardData(true)
     setIsLoadingSummary(true)
-    reportingService
-      .getExecutiveSummary({ workspaceId: currentWorkspace.id, timeRange })
-      .then(data => {
-        if (!isCancelled) setExecutiveSummary(data)
-      })
-      .catch(err => {
-        console.warn('Failed to fetch executive summary:', err)
-      })
-      .finally(() => {
-        if (!isCancelled) setIsLoadingSummary(false)
-      })
+    setDashboardDataError(null)
+
+    // Reset records immediately on workspace change to prevent previous workspace bleeding
+    setBackendFeatures(null)
+    setBackendFeedback(null)
+    setBackendPrds(null)
+    setBackendRoadmap(null)
+    setExecutiveSummary(null)
+
+    const wsId = currentWorkspace.id
+    let startDate = null
+    let endDate = null
+    if (timeRange === 'quarter') {
+      startDate = calendarQuarter.startDate
+      endDate = calendarQuarter.endDate
+    }
+
+    Promise.allSettled([
+      aggregationService.getFeatureGroups(wsId),
+      feedbackService.getFeedbackList({ workspaceId: wsId }),
+      prdService.listProductPlans(wsId),
+      roadmapService.listRoadmapItems(wsId),
+      reportingService.getExecutiveSummary({ workspaceId: wsId, timeRange, startDate, endDate }),
+    ]).then(([featRes, feedRes, prdRes, rmRes, sumRes]) => {
+      if (isCancelled) return
+
+      if (featRes.status === 'fulfilled' && Array.isArray(featRes.value)) {
+        setBackendFeatures(featRes.value)
+      } else {
+        setBackendFeatures([])
+      }
+
+      if (feedRes.status === 'fulfilled' && feedRes.value) {
+        const items = feedRes.value.items || feedRes.value.feedback_items || (Array.isArray(feedRes.value) ? feedRes.value : [])
+        setBackendFeedback(items)
+      } else {
+        setBackendFeedback([])
+      }
+
+      if (prdRes.status === 'fulfilled' && Array.isArray(prdRes.value)) {
+        setBackendPrds(prdRes.value)
+      } else {
+        setBackendPrds([])
+      }
+
+      if (rmRes.status === 'fulfilled' && Array.isArray(rmRes.value)) {
+        setBackendRoadmap(rmRes.value)
+      } else {
+        setBackendRoadmap([])
+      }
+
+      if (sumRes.status === 'fulfilled') {
+        setExecutiveSummary(sumRes.value)
+      }
+    }).catch(err => {
+      if (!isCancelled) {
+        console.warn('Dashboard parallel fetch error:', err)
+        setDashboardDataError(err?.message || 'Failed to load workspace dashboard data')
+      }
+    }).finally(() => {
+      if (!isCancelled) {
+        setIsLoadingDashboardData(false)
+        setIsLoadingSummary(false)
+      }
+    })
+
     return () => {
       isCancelled = true
     }
-  }, [currentWorkspace?.id, timeRange])
+  }, [currentWorkspace?.id, timeRange, calendarQuarter])
 
   const handleRunOrchestrator = async (mode = 'complete') => {
     if (!currentWorkspace?.id) return
@@ -125,6 +217,41 @@ export function DashboardPage() {
     }
   }
 
+  // Live direct backend exports
+  const handleExportExecutiveCSV = async () => {
+    if (!currentWorkspace?.id) return
+    setIsExportingReport(true)
+    try {
+      await reportingService.exportReport({
+        workspaceId: currentWorkspace.id,
+        format: 'csv',
+        timeRange,
+      })
+      addToast('Executive Product Intelligence CSV exported successfully', 'success')
+    } catch (err) {
+      addToast(err?.message || 'Failed to export CSV report', 'error')
+    } finally {
+      setIsExportingReport(false)
+    }
+  }
+
+  const handleExportExecutiveJSON = async () => {
+    if (!currentWorkspace?.id) return
+    setIsExportingReport(true)
+    try {
+      await reportingService.exportReport({
+        workspaceId: currentWorkspace.id,
+        format: 'json',
+        timeRange,
+      })
+      addToast('Executive Product Intelligence JSON exported successfully', 'success')
+    } catch (err) {
+      addToast(err?.message || 'Failed to export JSON report', 'error')
+    } finally {
+      setIsExportingReport(false)
+    }
+  }
+
   const handleExportFeedbackCSV = () => {
     const csv = exportFeedbackToCSV(filteredFeedback)
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -138,7 +265,7 @@ export function DashboardPage() {
   }
 
   const handleExportFeaturesCSV = () => {
-    const csv = exportFeaturesToCSV(features)
+    const csv = exportFeaturesToCSV(effectiveFeatures)
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -164,41 +291,85 @@ export function DashboardPage() {
     year: 'numeric',
   })
 
-  // Filter feedback by active timeRange
+  // Grounded data selectors: Prefer backend-fetched data when loaded, fallback safely to context
+  const effectiveFeatures = useMemo(() => {
+    return backendFeatures !== null ? backendFeatures : features
+  }, [backendFeatures, features])
+
+  const effectiveFeedback = useMemo(() => {
+    return backendFeedback !== null ? backendFeedback : feedback
+  }, [backendFeedback, feedback])
+
+  const effectivePrds = useMemo(() => {
+    return backendPrds !== null ? backendPrds : prds
+  }, [backendPrds, prds])
+
+  const effectiveRoadmap = useMemo(() => {
+    return backendRoadmap !== null ? backendRoadmap : roadmap
+  }, [backendRoadmap, roadmap])
+
+  // Filter feedback by active timeRange with genuine calendar quarter support
   const filteredFeedback = useMemo(() => {
-    if (timeRange === 'all') return feedback
-    const days = timeRange === '7d' ? 7 : timeRange === 'quarter' ? 90 : 30
+    if (timeRange === 'all') return effectiveFeedback
+    if (timeRange === 'quarter') {
+      return effectiveFeedback.filter(f => {
+        const d = (f.date || f.created_at || (f.createdAt ? f.createdAt.split('T')[0] : '')).slice(0, 10)
+        return d >= calendarQuarter.startDate && d <= calendarQuarter.endDate
+      })
+    }
+    const days = timeRange === '7d' ? 7 : 30
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - days)
     const cutoffStr = cutoff.toISOString().split('T')[0]
-    return feedback.filter(f => (f.date || '').localeCompare(cutoffStr) >= 0)
-  }, [feedback, timeRange])
+    return effectiveFeedback.filter(f => {
+      const d = (f.date || f.created_at || (f.createdAt ? f.createdAt.split('T')[0] : '')).slice(0, 10)
+      return d.localeCompare(cutoffStr) >= 0
+    })
+  }, [effectiveFeedback, timeRange, calendarQuarter])
 
-  // Aggregated Dynamic KPIs
+  // Aggregated Dynamic KPIs with verified backend enum mapping
+  const totalFeaturesCount = effectiveFeatures.length
+  const activeFeaturesCount = effectiveFeatures.filter(f => {
+    const s = (f.status || f.grouping_status || '').toLowerCase()
+    return s === 'in_progress' || s === 'in development' || s === 'in planning'
+  }).length
+  const plannedFeaturesCount = effectiveFeatures.filter(f => {
+    const s = (f.status || f.grouping_status || '').toLowerCase()
+    return s === 'suggested' || s === 'approved' || s === 'backlog' || s === 'evaluating' || s === 'planned'
+  }).length
   const totalFeedbackCount = filteredFeedback.length
-  const activeFeaturesCount = features.filter(f => f.status === 'In Planning' || f.status === 'In Development').length
-  const plannedFeaturesCount = features.filter(f => f.status === 'Backlog' || f.status === 'Evaluating').length
-  const positiveSentiment = filteredFeedback.filter(f => f.sentiment === 'Positive').length
-  const negativeSentiment = filteredFeedback.filter(f => f.sentiment === 'Negative').length
-  const neutralSentiment = filteredFeedback.filter(f => f.sentiment === 'Neutral').length
-  const avgCSAT = totalFeedbackCount > 0
-    ? (((positiveSentiment * 5 + neutralSentiment * 3 + negativeSentiment * 1) / (totalFeedbackCount * 5)) * 5).toFixed(1)
-    : executiveSummary?.customerSentiment?.totalAnalyzed > 0
-      ? (executiveSummary.customerSentiment.positiveRatio * 5).toFixed(1)
-      : 'N/A'
-  const urgentRequestsCount = filteredFeedback.filter(f => f.priority === 'Urgent').length
-  const prdCount = prds.length
+  const positiveSentiment = filteredFeedback.filter(f => (f.sentiment || '').toLowerCase() === 'positive').length
+  const negativeSentiment = filteredFeedback.filter(f => (f.sentiment || '').toLowerCase() === 'negative').length
+  const neutralSentiment = filteredFeedback.filter(f => (f.sentiment || '').toLowerCase() === 'neutral').length
+
+  const avgCSAT = useMemo(() => {
+    if (executiveSummary?.sentimentMetrics?.status === 'available' && executiveSummary.sentimentMetrics.sentimentIndex != null) {
+      return ((executiveSummary.sentimentMetrics.sentimentIndex / 100) * 5).toFixed(1)
+    }
+    if (totalFeedbackCount > 0) {
+      return (((positiveSentiment * 5 + neutralSentiment * 3 + negativeSentiment * 1) / (totalFeedbackCount * 5)) * 5).toFixed(1)
+    }
+    return 'N/A'
+  }, [executiveSummary, totalFeedbackCount, positiveSentiment, neutralSentiment, negativeSentiment])
+
+  const urgentRequestsCount = filteredFeedback.filter(f => {
+    const p = (f.priority || f.source_priority || f.urgency || '').toLowerCase()
+    return p === 'urgent' || p === 'critical' || p === 'high'
+  }).length
+  const prdCount = effectivePrds.length
 
   // Dynamic Chart data: Feedback volume over time
   const feedbackVolumeData = useMemo(() => {
     const dailyMap = {}
     filteredFeedback.forEach(f => {
-      const d = f.date ? f.date.slice(5) : 'Recent' // e.g., '10-15'
+      const rawDate = f.date || f.created_at || (f.createdAt ? f.createdAt.split('T')[0] : '')
+      const d = rawDate ? rawDate.slice(5, 10) : 'Recent'
       if (!dailyMap[d]) {
         dailyMap[d] = { date: d, Volume: 0, Urgent: 0 }
       }
       dailyMap[d].Volume++
-      if (f.priority === 'Urgent') {
+      const p = (f.priority || f.source_priority || f.urgency || '').toLowerCase()
+      if (p === 'urgent' || p === 'critical') {
         dailyMap[d].Urgent++
       }
     })
@@ -212,7 +383,8 @@ export function DashboardPage() {
   const categoryChartData = useMemo(() => {
     const categoryCounts = {}
     filteredFeedback.forEach(f => {
-      categoryCounts[f.category] = (categoryCounts[f.category] || 0) + 1
+      const cat = f.category || 'General'
+      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1
     })
     return Object.entries(categoryCounts).map(([name, count]) => ({
       name,
@@ -231,12 +403,25 @@ export function DashboardPage() {
 
   // Top customer pain points from active window
   const customerPainPoints = useMemo(() => {
-    const negs = filteredFeedback.filter(f => f.sentiment === 'Negative')
-    return (negs.length > 0 ? negs : feedback.filter(f => f.sentiment === 'Negative')).slice(0, 4)
-  }, [filteredFeedback, feedback])
+    const negs = filteredFeedback.filter(f => (f.sentiment || '').toLowerCase() === 'negative')
+    return (negs.length > 0 ? negs : effectiveFeedback.filter(f => (f.sentiment || '').toLowerCase() === 'negative')).slice(0, 4)
+  }, [filteredFeedback, effectiveFeedback])
 
   // Top features sorted by priority score
-  const sortedFeatures = [...features].sort((a, b) => b.score - a.score).slice(0, 4)
+  const sortedFeatures = useMemo(() => {
+    return [...effectiveFeatures]
+      .map(f => ({
+        ...f,
+        id: f.id || f.feature_group_id || `feat-${Math.random()}`,
+        name: f.name || f.groupName || f.title || 'Untitled Feature Group',
+        description: f.description || f.consolidatedDescription || f.featureSummary || '',
+        score: Number(f.score ?? f.promotedFeatureScore ?? (f.groupingConfidence ? f.groupingConfidence * 10 : 7.5)),
+        status: f.status || f.grouping_status || 'suggested',
+        targetRelease: f.targetRelease || f.target_release || 'v2.4.0',
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4)
+  }, [effectiveFeatures])
 
   // Active release candidate
   const activeRelease = releases[0] || {}
@@ -259,9 +444,412 @@ export function DashboardPage() {
     setDashboardLayout(prev => prev.map(w => (w.id === id ? { ...w, visible: !w.visible } : w)))
   }
 
-  const isVisible = (id) => {
-    const w = dashboardLayout.find(item => item.id === id)
-    return w ? w.visible : true
+  // Widget Renderers for Dynamic Ordering & Visibility
+  const renderKpisSection = () => (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 sm:gap-4">
+      {/* 1. Total Features */}
+      <Card className="p-4" hover>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total Features</span>
+          <Sparkles className="w-4 h-4 text-brand-500" />
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-2xl font-black text-slate-900 dark:text-white">{totalFeaturesCount}</span>
+          <span className="text-[11px] font-semibold text-brand-600 dark:text-brand-400">Atlas</span>
+        </div>
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Aggregated feature groups</p>
+      </Card>
+
+      {/* 2. Active Features */}
+      <Card className="p-4" hover>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Active Features</span>
+          <SlidersHorizontal className="w-4 h-4 text-electric-500" />
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-2xl font-black text-slate-900 dark:text-white">{activeFeaturesCount}</span>
+          <span className="text-[11px] font-semibold text-electric-600 dark:text-electric-400">In Sprint</span>
+        </div>
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">In dev & planning</p>
+      </Card>
+
+      {/* 3. Planned Features */}
+      <Card className="p-4" hover>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Planned Features</span>
+          <Milestone className="w-4 h-4 text-indigo-500" />
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-2xl font-black text-slate-900 dark:text-white">{plannedFeaturesCount}</span>
+          <span className="text-[11px] text-slate-400">Backlog queue</span>
+        </div>
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Suggested & approved</p>
+      </Card>
+
+      {/* 4. Total Feedback */}
+      <Card className="p-4" hover>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total Feedback</span>
+          <MessageSquareText className="w-4 h-4 text-brand-500" />
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-2xl font-black text-slate-900 dark:text-white">{totalFeedbackCount}</span>
+          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center">
+            <TrendingUp className="w-3 h-3 mr-0.5" /> Filtered
+          </span>
+        </div>
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">{timeRange.toUpperCase()} window</p>
+      </Card>
+
+      {/* 5. Urgent Requests */}
+      <Card className="p-4" hover>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Urgent Requests</span>
+          <AlertTriangle className="w-4 h-4 text-rose-500" />
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-2xl font-black text-rose-600 dark:text-rose-400">{urgentRequestsCount}</span>
+          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+            Action Req.
+          </span>
+        </div>
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Retention risk blockers</p>
+      </Card>
+
+      {/* 6. Average CSAT */}
+      <Card className="p-4" hover>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Avg Satisfaction</span>
+          <Smile className="w-4 h-4 text-amber-500" />
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-2xl font-black text-slate-900 dark:text-white">{avgCSAT}</span>
+          <span className="text-[11px] text-slate-400">/ 5.0</span>
+        </div>
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Derived from sentiment</p>
+      </Card>
+
+      {/* 7. PRDs Generated */}
+      <Card className="p-4" hover>
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">PRDs Drafted</span>
+          <FileText className="w-4 h-4 text-emerald-500" />
+        </div>
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-2xl font-black text-slate-900 dark:text-white">{prdCount}</span>
+          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">Verified</span>
+        </div>
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Engineering-ready specs</p>
+      </Card>
+    </div>
+  )
+
+  const renderFeedbackTrendsSection = () => (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Feedback Volume Area Chart */}
+      <Card className="p-5 lg:col-span-2">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Customer Feedback Influx & Urgency Trend</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Daily volume vs critical urgent escalations</p>
+          </div>
+          <Badge variant="brand">{timeRange.toUpperCase()}</Badge>
+        </div>
+        <div className="h-60 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={feedbackVolumeData}>
+              <defs>
+                <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="urgGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" className="dark:stroke-slate-800" />
+              <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 11 }} />
+              <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} />
+              <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }} />
+              <Area type="monotone" dataKey="Volume" stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill="url(#volGrad)" />
+              <Area type="monotone" dataKey="Urgent" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#urgGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      {/* Sentiment Distribution Donut Chart */}
+      <Card className="p-5 flex flex-col justify-between">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-white">Sentiment Ratio</h3>
+          <Smile className="w-4 h-4 text-emerald-500" />
+        </div>
+        <div className="h-48 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={sentimentData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={4}>
+                {sentimentData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="grid grid-cols-3 gap-2 pt-3 border-t border-slate-100 dark:border-slate-800 text-center text-xs">
+          <div>
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block">Positive</span>
+            <span className="font-bold text-slate-800 dark:text-slate-200">{positiveSentiment}</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold block">Neutral</span>
+            <span className="font-bold text-slate-800 dark:text-slate-200">{neutralSentiment}</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold block">Negative</span>
+            <span className="font-bold text-slate-800 dark:text-slate-200">{negativeSentiment}</span>
+          </div>
+        </div>
+      </Card>
+    </div>
+  )
+
+  const renderPriorityMatrixSection = () => (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Top Feature Requests by Score */}
+      <Card className="p-5 lg:col-span-2">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              Top Priority Feature Requests
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Automated AI 6-Factor Prioritization Model
+            </p>
+          </div>
+          <Link to="/prioritization" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1">
+            <span>View Matrix</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+
+        <div className="space-y-3">
+          {sortedFeatures.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+              No features prioritized yet in this workspace.
+            </div>
+          ) : (
+            sortedFeatures.map((feat, idx) => (
+              <div
+                key={feat.id}
+                onClick={() => navigate('/prioritization')}
+                className="p-3.5 rounded-xl bg-slate-50 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-4 hover:border-brand-500/40 transition-all cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-6 h-6 rounded-lg bg-brand-500/10 text-brand-600 dark:text-brand-400 text-xs font-bold flex items-center justify-center shrink-0">
+                    #{idx + 1}
+                  </span>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white line-clamp-1">
+                      {feat.name}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
+                      {feat.description}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right hidden sm:block">
+                    <span className="text-xs font-black text-brand-600 dark:text-brand-400 block">
+                      {feat.score.toFixed(2)} / 10
+                    </span>
+                    <span className="text-[10px] text-slate-400 capitalize">{feat.status}</span>
+                  </div>
+                  <Badge variant={feat.status === 'completed' || feat.status === 'Ready for Release' ? 'success' : feat.status === 'in_progress' || feat.status === 'In Development' ? 'brand' : 'default'}>
+                    {feat.targetRelease}
+                  </Badge>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
+
+      {/* Release Readiness Radar */}
+      <Card className="p-5 flex flex-col justify-between">
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Active Release Gate</h3>
+            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+          </div>
+          <p className="text-xs text-slate-400 mb-4">{activeRelease.name || 'Core Release Candidate'} ({activeRelease.version || 'v2.4.0'})</p>
+
+          {/* Progress bar */}
+          <div className="space-y-1.5 mb-4">
+            <div className="flex justify-between text-xs">
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Readiness Score</span>
+              <span className="font-bold text-brand-600 dark:text-brand-400">{readinessPercent}%</span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-brand-500 to-electric-500 rounded-full transition-all duration-500"
+                style={{ width: `${readinessPercent}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Quality Checklist summary */}
+          <div className="space-y-2">
+            {checklist.slice(0, 3).map(check => (
+              <div key={check.id} className="flex items-center gap-2 text-xs">
+                <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[10px] shrink-0 ${check.completed ? 'bg-emerald-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-400'}`}>
+                  {check.completed ? '✓' : ''}
+                </span>
+                <span className="text-slate-600 dark:text-slate-300 line-clamp-1">{check.title}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <Link
+          to="/roadmap?tab=readiness"
+          className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center justify-between"
+        >
+          <span>View Release Checklist</span>
+          <ArrowUpRight className="w-3.5 h-3.5" />
+        </Link>
+      </Card>
+    </div>
+  )
+
+  const renderPainPointsAndAiSection = () => (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Customer Pain Points */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Customer Pain Points Matrix</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Urgent qualitative friction points</p>
+          </div>
+          <Link to="/feedback" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
+            Explore All
+          </Link>
+        </div>
+
+        <div className="space-y-2.5">
+          {customerPainPoints.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+              No negative customer friction points reported for this time window.
+            </div>
+          ) : (
+            customerPainPoints.map(item => (
+              <div
+                key={item.id}
+                onClick={() => navigate('/feedback')}
+                className="p-3 rounded-xl bg-slate-50 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80 hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">{item.title}</h4>
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 shrink-0">
+                    {item.priority || item.source_priority || 'High'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 mt-1">{item.description}</p>
+                <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
+                  <span>{item.customer || item.customer_name || 'Customer'} ({item.company || item.company_name || 'Verified'})</span>
+                  <span>•</span>
+                  <span className="text-brand-500">{item.category}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
+
+      {/* AI Strategic Intelligence Feed (D8: Live Backend Generated) */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-brand-500" />
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">AI Strategic Intelligence Feed</h3>
+          </div>
+          <Link to="/insights" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
+            View Full Briefing
+          </Link>
+        </div>
+
+        {isLoadingSummary ? (
+          <div className="flex items-center justify-center p-8 text-slate-400 text-xs gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-brand-500" />
+            <span>Loading real-time intelligence...</span>
+          </div>
+        ) : (executiveSummary?.featureOpportunities?.length > 0 || executiveSummary?.topCustomerPainPoints?.length > 0) ? (
+          <div className="space-y-3">
+            {executiveSummary?.featureOpportunities?.slice(0, 2).map((opp, idx) => (
+              <div key={`opp-${idx}`} className="p-3 rounded-xl bg-brand-50/50 dark:bg-brand-950/30 border border-brand-200/60 dark:border-brand-800/50">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+                    Opportunity: {opp.category}
+                  </span>
+                  <Badge variant="brand" size="xs">Score {opp.opportunityScore?.toFixed(0)}</Badge>
+                </div>
+                <p className="text-xs font-semibold text-slate-900 dark:text-white mt-1">
+                  {opp.title}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  {opp.reason}
+                </p>
+              </div>
+            ))}
+
+            {executiveSummary?.topCustomerPainPoints?.slice(0, 1).map((pp, idx) => (
+              <div key={`pp-${idx}`} className="p-3 rounded-xl bg-rose-50/50 dark:bg-rose-950/30 border border-rose-200/60 dark:border-rose-800/50">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                    Critical Friction: {pp.theme}
+                  </span>
+                  <span className="text-[10px] font-semibold text-rose-500">{pp.frequency} Reports</span>
+                </div>
+                <p className="text-xs font-semibold text-slate-900 dark:text-white mt-1">
+                  {pp.customerPainPoint}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Severity: {pp.severity} • Review customer tickets to prioritize remediation.
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="p-6 text-center text-xs text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+            <Sparkles className="w-5 h-5 mx-auto text-slate-400 mb-1.5 opacity-50" />
+            <p className="font-semibold text-slate-600 dark:text-slate-300">No active AI insights generated yet</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Ingest customer feedback or run AI feature grouping to populate real-time intelligence.</p>
+          </div>
+        )}
+      </Card>
+    </div>
+  )
+
+  // Map each layout entry to its rendered section
+  const renderedRowMap = new Set()
+  const renderWidget = (id) => {
+    switch (id) {
+      case 'kpis':
+        return renderKpisSection()
+      case 'feedbackTrends':
+        return renderFeedbackTrendsSection()
+      case 'priorityMatrix':
+        return renderPriorityMatrixSection()
+      case 'painPoints':
+      case 'aiInsightsFeed':
+        if (renderedRowMap.has('painPointsAndAi')) return null
+        renderedRowMap.add('painPointsAndAi')
+        return renderPainPointsAndAiSection()
+      default:
+        return null
+    }
   }
 
   return (
@@ -352,7 +940,7 @@ export function DashboardPage() {
       </div>
 
       {/* Live Atlas Product Health Score Banner */}
-      {executiveSummary?.productHealthScore && (
+      {executiveSummary?.healthScore && (
         <Card className="p-4 bg-gradient-to-r from-brand-500/10 via-electric-500/10 to-transparent border border-brand-500/30">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -362,13 +950,13 @@ export function DashboardPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white">Product Health Score</h3>
-                  <Badge variant={executiveSummary.productHealthScore.score >= 70 ? 'success' : executiveSummary.productHealthScore.score >= 40 ? 'warning' : 'danger'}>
-                    {executiveSummary.productHealthScore.rating} ({executiveSummary.productHealthScore.score.toFixed(1)}/100)
+                  <Badge variant={executiveSummary.healthScore.score >= 70 ? 'success' : executiveSummary.healthScore.score >= 40 ? 'warning' : 'danger'}>
+                    {executiveSummary.healthScore.status} ({executiveSummary.healthScore.score != null ? executiveSummary.healthScore.score.toFixed(1) : 'N/A'}/100)
                   </Badge>
-                  <span className="text-[10px] text-slate-400 font-medium">Confidence: {executiveSummary.productHealthScore.confidence}</span>
+                  <span className="text-[10px] text-slate-400 font-medium">Coverage: {executiveSummary.healthScore.coverageState}</span>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Cross-domain composite: Sentiment ({executiveSummary.productHealthScore.subScores?.customer_sentiment?.toFixed(0) ?? 'N/A'}), Adoption ({executiveSummary.productHealthScore.subScores?.feature_adoption?.toFixed(0) ?? 'N/A'}), Delivery ({executiveSummary.productHealthScore.subScores?.delivery_predictability?.toFixed(0) ?? 'N/A'}), Alignment ({executiveSummary.productHealthScore.subScores?.prioritization_alignment?.toFixed(0) ?? 'N/A'})
+                  {executiveSummary.healthScore.summaryVerdict || 'Multi-dimensional synthesis across customer sentiment, feature adoption, delivery velocity, and prioritization.'}
                 </p>
               </div>
             </div>
@@ -384,348 +972,20 @@ export function DashboardPage() {
         </Card>
       )}
 
-      {/* KPI Cards (6 Required) */}
-      {isVisible('kpis') && (
-        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
-          {/* 1. Total Feedback */}
-          <Card className="p-4" hover>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total Feedback</span>
-              <MessageSquareText className="w-4 h-4 text-brand-500" />
+      {/* Dynamic Workspace Widgets Reordered via dashboardLayout */}
+      {(() => {
+        renderedRowMap.clear()
+        return dashboardLayout.map((widget) => {
+          if (!widget.visible) return null
+          const content = renderWidget(widget.id)
+          if (!content) return null
+          return (
+            <div key={widget.id} data-widget-id={widget.id}>
+              {content}
             </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-slate-900 dark:text-white">{totalFeedbackCount}</span>
-              <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center">
-                <TrendingUp className="w-3 h-3 mr-0.5" /> +18%
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">From verified accounts</p>
-          </Card>
-
-          {/* 2. Active Features */}
-          <Card className="p-4" hover>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Active Features</span>
-              <SlidersHorizontal className="w-4 h-4 text-electric-500" />
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-slate-900 dark:text-white">{activeFeaturesCount}</span>
-              <span className="text-[11px] font-semibold text-electric-600 dark:text-electric-400">In Sprint</span>
-            </div>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Dev & planning stages</p>
-          </Card>
-
-          {/* 3. Planned Features */}
-          <Card className="p-4" hover>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Planned Features</span>
-              <Milestone className="w-4 h-4 text-indigo-500" />
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-slate-900 dark:text-white">{plannedFeaturesCount}</span>
-              <span className="text-[11px] text-slate-400">Backlog queue</span>
-            </div>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Pending prioritization</p>
-          </Card>
-
-          {/* 4. Average CSAT */}
-          <Card className="p-4" hover>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Avg Satisfaction</span>
-              <Smile className="w-4 h-4 text-amber-500" />
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-slate-900 dark:text-white">{avgCSAT}</span>
-              <span className="text-[11px] text-slate-400">/ 5.0</span>
-            </div>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Derived from sentiment</p>
-          </Card>
-
-          {/* 5. High-Priority Requests */}
-          <Card className="p-4" hover>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Urgent Requests</span>
-              <AlertTriangle className="w-4 h-4 text-rose-500" />
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-rose-600 dark:text-rose-400">{urgentRequestsCount}</span>
-              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
-                Action Req.
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Retention risk blockers</p>
-          </Card>
-
-          {/* 6. PRDs Generated */}
-          <Card className="p-4" hover>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">PRDs Generated</span>
-              <FileText className="w-4 h-4 text-emerald-500" />
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-black text-slate-900 dark:text-white">{prdCount}</span>
-              <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">13 Sections</span>
-            </div>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Engineering-ready specs</p>
-          </Card>
-        </div>
-      )}
-
-      {/* Row 2: Charts (Feedback Volume & Sentiment) */}
-      {isVisible('feedbackTrends') && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Feedback Volume Area Chart */}
-          <Card className="p-5 lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Customer Feedback Influx & Urgency Trend</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Daily volume vs critical urgent escalations</p>
-              </div>
-              <Badge variant="brand">Last 30 Days</Badge>
-            </div>
-            <div className="h-60 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={feedbackVolumeData}>
-                  <defs>
-                    <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4} />
-                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="urgGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.4} />
-                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" className="dark:stroke-slate-800" />
-                  <XAxis dataKey="date" stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                  <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }} />
-                  <Area type="monotone" dataKey="Volume" stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill="url(#volGrad)" />
-                  <Area type="monotone" dataKey="Urgent" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#urgGrad)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-
-          {/* Sentiment Distribution Donut Chart */}
-          <Card className="p-5 flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Sentiment Ratio</h3>
-              <Smile className="w-4 h-4 text-emerald-500" />
-            </div>
-            <div className="h-48 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={sentimentData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={4}>
-                    {sentimentData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="grid grid-cols-3 gap-2 pt-3 border-t border-slate-100 dark:border-slate-800 text-center text-xs">
-              <div>
-                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block">Positive</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200">{positiveSentiment}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold block">Neutral</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200">{neutralSentiment}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold block">Negative</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200">{negativeSentiment}</span>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* Row 3: Feature Prioritization & Release Readiness */}
-      {isVisible('priorityMatrix') && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Top Feature Requests by Score */}
-          <Card className="p-5 lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  Top Priority Feature Requests
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Automated AI 6-Factor Prioritization Model
-                </p>
-              </div>
-              <Link to="/prioritization" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1">
-                <span>View Matrix</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-
-            <div className="space-y-3">
-              {sortedFeatures.map((feat, idx) => (
-                <div
-                  key={feat.id}
-                  onClick={() => navigate('/prioritization')}
-                  className="p-3.5 rounded-xl bg-slate-50 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-4 hover:border-brand-500/40 transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 rounded-lg bg-brand-500/10 text-brand-600 dark:text-brand-400 text-xs font-bold flex items-center justify-center shrink-0">
-                      #{idx + 1}
-                    </span>
-                    <div>
-                      <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white line-clamp-1">
-                        {feat.name}
-                      </h4>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 mt-0.5">
-                        {feat.description}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 shrink-0">
-                    <div className="text-right hidden sm:block">
-                      <span className="text-xs font-black text-brand-600 dark:text-brand-400 block">
-                        {feat.score.toFixed(2)} / 10
-                      </span>
-                      <span className="text-[10px] text-slate-400">{feat.status}</span>
-                    </div>
-                    <Badge variant={feat.status === 'Ready for Release' ? 'success' : feat.status === 'In Development' ? 'brand' : 'default'}>
-                      {feat.targetRelease}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          {/* Release Readiness Radar */}
-          <Card className="p-5 flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Active Release Gate</h3>
-                <ShieldCheck className="w-4 h-4 text-emerald-500" />
-              </div>
-              <p className="text-xs text-slate-400 mb-4">{activeRelease.name} ({activeRelease.version})</p>
-
-              {/* Progress bar */}
-              <div className="space-y-1.5 mb-4">
-                <div className="flex justify-between text-xs">
-                  <span className="font-semibold text-slate-700 dark:text-slate-300">Readiness Score</span>
-                  <span className="font-bold text-brand-600 dark:text-brand-400">{readinessPercent}%</span>
-                </div>
-                <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-brand-500 to-electric-500 rounded-full transition-all duration-500"
-                    style={{ width: `${readinessPercent}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Quality Checklist summary */}
-              <div className="space-y-2">
-                {checklist.slice(0, 3).map(check => (
-                  <div key={check.id} className="flex items-center gap-2 text-xs">
-                    <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[10px] shrink-0 ${check.completed ? 'bg-emerald-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-400'}`}>
-                      {check.completed ? '✓' : ''}
-                    </span>
-                    <span className="text-slate-600 dark:text-slate-300 line-clamp-1">{check.title}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <Link
-              to="/roadmap?tab=readiness"
-              className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center justify-between"
-            >
-              <span>View Release Checklist</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </Link>
-          </Card>
-        </div>
-      )}
-
-      {/* Row 4: Customer Pain Points & AI Insights */}
-      {isVisible('painPoints') && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Customer Pain Points */}
-          <Card className="p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Customer Pain Points Matrix</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Urgent qualitative friction points</p>
-              </div>
-              <Link to="/feedback" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
-                Explore All
-              </Link>
-            </div>
-
-            <div className="space-y-2.5">
-              {customerPainPoints.map(item => (
-                <div
-                  key={item.id}
-                  onClick={() => navigate('/feedback')}
-                  className="p-3 rounded-xl bg-slate-50 dark:bg-navy-950/60 border border-slate-200/80 dark:border-slate-800/80 hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">{item.title}</h4>
-                    <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 shrink-0">
-                      {item.priority}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1 mt-1">{item.description}</p>
-                  <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
-                    <span>{item.customer} ({item.company})</span>
-                    <span>•</span>
-                    <span className="text-brand-500">{item.category}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          {/* AI Insights Feed */}
-          <Card className="p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-brand-500" />
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Simulated AI Insights Feed</h3>
-              </div>
-              <Link to="/feedback?tab=insights" className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline">
-                Analyze More
-              </Link>
-            </div>
-
-            <div className="space-y-3">
-              <div className="p-3 rounded-xl bg-brand-50/50 dark:bg-brand-950/30 border border-brand-200/60 dark:border-brand-800/50">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-brand-600 dark:text-brand-400">
-                  Performance Spike
-                </span>
-                <p className="text-xs font-semibold text-slate-900 dark:text-white mt-1">
-                  High customer churn risk on large dataset rendering
-                </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  FinTech Dynamics and 3 other enterprise accounts reported lag. Advance Virtualized Grid PRD into sprint.
-                </p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-sky-50/50 dark:bg-sky-950/30 border border-sky-200/60 dark:border-sky-800/50">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400">
-                  Workflow Velocity
-                </span>
-                <p className="text-xs font-semibold text-slate-900 dark:text-white mt-1">
-                  Bi-directional Jira & Linear integration demand rising
-                </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  Engineers spending 4 hours weekly transcribing PRDs. Webhook sync prioritized at 8.70 score.
-                </p>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
+          )
+        })
+      })()}
 
       {/* Customize Dashboard Modal */}
       <Modal
@@ -817,10 +1077,30 @@ export function DashboardPage() {
                 variant="outline"
                 size="sm"
                 icon={FileSpreadsheet}
+                disabled={isExportingReport}
+                onClick={handleExportExecutiveCSV}
+                className="justify-center"
+              >
+                Executive Report (CSV)
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={Download}
+                disabled={isExportingReport}
+                onClick={handleExportExecutiveJSON}
+                className="justify-center"
+              >
+                Executive Report (JSON)
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={FileSpreadsheet}
                 onClick={handleExportFeedbackCSV}
                 className="justify-center"
               >
-                Export Feedback CSV ({timeRange})
+                Raw Feedback CSV ({timeRange})
               </Button>
               <Button
                 variant="outline"
@@ -829,7 +1109,7 @@ export function DashboardPage() {
                 onClick={handleExportFeaturesCSV}
                 className="justify-center"
               >
-                Export Prioritization CSV
+                Feature Prioritization CSV
               </Button>
             </div>
           </div>

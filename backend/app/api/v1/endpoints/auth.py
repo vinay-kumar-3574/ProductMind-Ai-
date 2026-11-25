@@ -136,6 +136,9 @@ async def login_user(
 
     # 1. Retrieve user by email
     user = await user_repo.find_by_email(payload.email)
+    if not user and payload.email.strip().lower() in ("demo@productmind.ai", "pm@productmind.ai"):
+        # Fallback alias to primary demo user
+        user = await user_repo.find_by_email("alex.rivera@productmind.ai")
 
     # 2. Verify existence, active state, and password hash (constant error message to prevent enumeration)
     if not user or not user.is_active or not verify_password(payload.password, user.password_hash):

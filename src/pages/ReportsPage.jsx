@@ -72,9 +72,21 @@ export function ReportsPage() {
     if (!currentWorkspace?.id) return
     setIsLoadingSummary(true)
     try {
+      let startDate = null
+      let endDate = null
+      if (dateRange === 'quarter') {
+        const now = new Date()
+        const q = Math.floor(now.getMonth() / 3)
+        const qStart = new Date(now.getFullYear(), q * 3, 1)
+        const qEnd = new Date(now.getFullYear(), (q + 1) * 3, 0)
+        startDate = qStart.toISOString().split('T')[0]
+        endDate = qEnd.toISOString().split('T')[0]
+      }
       const data = await reportingService.getExecutiveSummary({
         workspaceId: currentWorkspace.id,
         timeRange: dateRange,
+        startDate,
+        endDate,
       })
       setExecutiveSummary(data)
     } catch (err) {
@@ -92,7 +104,8 @@ export function ReportsPage() {
       const data = await reportingService.getSavedReports({
         workspaceId: currentWorkspace.id,
       })
-      setSavedReports(data || [])
+      const list = Array.isArray(data) ? data : (data?.items || [])
+      setSavedReports(list)
     } catch (err) {
       console.warn('Failed to load saved reports:', err)
     } finally {
@@ -157,22 +170,14 @@ export function ReportsPage() {
     if (!currentWorkspace?.id) return
     setIsExporting(true)
     try {
-      const csvBlob = await reportingService.exportReport({
+      await reportingService.exportReport({
         workspaceId: currentWorkspace.id,
         format: 'csv',
         timeRange: dateRange,
       })
-      const url = URL.createObjectURL(csvBlob)
-      const link = document.createElement('a')
-      link.href = url
-      link.setAttribute('download', `executive_report_${currentWorkspace.id}_${dateRange}.csv`)
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
       addToast('Exported executive report to CSV', 'success')
     } catch (err) {
-      // Fallback to client CSV
-      handleExportFeedbackCSV()
+      addToast(err.message || 'CSV export failed', 'error')
     } finally {
       setIsExporting(false)
     }
@@ -182,19 +187,11 @@ export function ReportsPage() {
     if (!currentWorkspace?.id) return
     setIsExporting(true)
     try {
-      const jsonData = await reportingService.exportReport({
+      await reportingService.exportReport({
         workspaceId: currentWorkspace.id,
         format: 'json',
         timeRange: dateRange,
       })
-      const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.setAttribute('download', `executive_report_${currentWorkspace.id}_${dateRange}.json`)
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
       addToast('Exported executive report to JSON', 'success')
     } catch (err) {
       addToast(err.message || 'JSON export failed', 'error')
@@ -329,35 +326,35 @@ export function ReportsPage() {
               <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Health Score</span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-2xl font-black text-brand-600 dark:text-brand-400">
-                  {executiveSummary.productHealthScore?.score?.toFixed(1) ?? 'N/A'}
+                  {executiveSummary.healthScore?.score?.toFixed(1) ?? 'N/A'}
                 </span>
                 <span className="text-xs font-semibold text-slate-500">/ 100</span>
               </div>
-              <span className="text-[11px] text-slate-500">Rating: {executiveSummary.productHealthScore?.rating ?? 'Unknown'}</span>
+              <span className="text-[11px] text-slate-500">Status: {executiveSummary.healthScore?.status ?? 'Unknown'}</span>
             </div>
 
             <div>
               <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Sentiment Ratio</span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                  {executiveSummary.customerSentiment?.positiveRatio != null
-                    ? `${(executiveSummary.customerSentiment.positiveRatio * 100).toFixed(0)}%`
+                  {executiveSummary.sentimentMetrics?.positiveRatio != null
+                    ? `${(executiveSummary.sentimentMetrics.positiveRatio * 100).toFixed(0)}%`
                     : 'N/A'}
                 </span>
                 <span className="text-xs font-semibold text-slate-500">Positive</span>
               </div>
-              <span className="text-[11px] text-slate-500">{executiveSummary.customerSentiment?.totalAnalyzed ?? 0} Feedback Items</span>
+              <span className="text-[11px] text-slate-500">{executiveSummary.sentimentMetrics?.totalAnalyzed ?? 0} Feedback Items</span>
             </div>
 
             <div>
               <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Delivery Predictability</span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-2xl font-black text-electric-600 dark:text-electric-400">
-                  {executiveSummary.deliveryPredictability?.predictabilityScore?.toFixed(0) ?? 'N/A'}%
+                  {executiveSummary.deliveryMetrics?.predictabilityIndex?.toFixed(0) ?? 'N/A'}%
                 </span>
               </div>
               <span className="text-[11px] text-slate-500">
-                {executiveSummary.deliveryPredictability?.overdueMilestones ?? 0} Overdue Milestones
+                {executiveSummary.deliveryMetrics?.overdueItems ?? 0} Overdue Items
               </span>
             </div>
 
@@ -365,10 +362,10 @@ export function ReportsPage() {
               <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Delivery Risk Level</span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className={`text-2xl font-black capitalize ${
-                  executiveSummary.deliveryRisk?.overallRiskLevel === 'high' ? 'text-rose-500' :
-                  executiveSummary.deliveryRisk?.overallRiskLevel === 'medium' ? 'text-amber-500' : 'text-emerald-500'
+                  executiveSummary.deliveryRisk?.riskLevel === 'high' || executiveSummary.deliveryRisk?.riskLevel === 'critical' ? 'text-rose-500' :
+                  executiveSummary.deliveryRisk?.riskLevel === 'medium' ? 'text-amber-500' : 'text-emerald-500'
                 }`}>
-                  {executiveSummary.deliveryRisk?.overallRiskLevel ?? 'Low'}
+                  {executiveSummary.deliveryRisk?.riskLevel ?? 'Low'}
                 </span>
               </div>
               <span className="text-[11px] text-slate-500">{executiveSummary.deliveryRisk?.itemsAtRisk?.length ?? 0} Items At Risk</span>
@@ -614,9 +611,10 @@ export function ReportsPage() {
                 className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-navy-950 text-slate-900 dark:text-white"
               >
                 <option value="executive_kpi">Executive KPI Summary</option>
-                <option value="sentiment_trend">Sentiment & Feedback Drilldown</option>
-                <option value="delivery_risk">Delivery & Milestone Risk</option>
+                <option value="sentiment_distribution">Sentiment & Feedback Distribution</option>
                 <option value="feature_prioritization">Feature Prioritization Matrix</option>
+                <option value="analytics_funnel">Analytics Funnel</option>
+                <option value="custom_dashboard">Custom Executive Dashboard</option>
               </select>
             </div>
             <div className="flex justify-end gap-2 pt-2">

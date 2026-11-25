@@ -124,25 +124,35 @@ class LLMService:
 
     async def generate_structured(
         self,
-        schema: Type[T],
-        prompt: str,
+        schema: Optional[Type[T]] = None,
+        prompt: Optional[str] = None,
         system_instruction: Optional[str] = None,
+        messages: Optional[List[BaseMessage]] = None,
+        response_schema: Optional[Type[T]] = None,
         **kwargs: Any,
     ) -> T:
         """
         Generates structured JSON output validated against a Pydantic model schema.
-        Used by ProductMind AI intelligence agents to produce strongly-typed insights,
-        scoring criteria, and PRD sections.
+        Supports both:
+        - prompt string with target schema and optional system_instruction
+        - pre-formatted messages list with target schema / response_schema
         """
-        if not prompt or not prompt.strip():
-            raise AIServiceException("Prompt cannot be empty.", provider=self.provider_name)
+        target_schema = schema or response_schema
+        if target_schema is None:
+            raise AIServiceException("Target schema is required for structured generation.", provider=self.provider_name)
 
-        messages: List[BaseMessage] = []
-        if system_instruction and system_instruction.strip():
-            messages.append(SystemMessage(content=system_instruction.strip()))
-        messages.append(HumanMessage(content=prompt.strip()))
+        if messages is not None:
+            call_messages = list(messages)
+        else:
+            if not prompt or not prompt.strip():
+                raise AIServiceException("Prompt cannot be empty.", provider=self.provider_name)
 
-        return await self.provider.ainvoke_structured(schema, messages, **kwargs)
+            call_messages = []
+            if system_instruction and system_instruction.strip():
+                call_messages.append(SystemMessage(content=system_instruction.strip()))
+            call_messages.append(HumanMessage(content=prompt.strip()))
+
+        return await self.provider.ainvoke_structured(target_schema, call_messages, **kwargs)
 
 
 # Singleton LLM service cache

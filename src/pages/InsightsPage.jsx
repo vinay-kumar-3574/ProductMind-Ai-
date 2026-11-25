@@ -62,11 +62,20 @@ export function InsightsPage() {
     setBriefingError(null)
 
     try {
-      const briefing = await reportingService.generateExecutiveBriefing({
+      const res = await reportingService.generateExecutiveBriefing({
         workspaceId: currentWorkspace.id,
         timeRange: '30d',
       })
-      setExecutiveBriefing(briefing)
+      const briefingContent = res?.briefing || res || {}
+      setExecutiveBriefing({
+        ...res,
+        ...briefingContent,
+        executiveSummary: briefingContent.executiveSummary || briefingContent.executive_summary || res?.executiveSummary || '',
+        strategicRecommendations: briefingContent.strategicRecommendations || briefingContent.strategic_recommendations || [],
+        deliveryRisks: briefingContent.deliveryRisks || briefingContent.delivery_risks || [],
+        keyDrivers: briefingContent.keyDrivers || briefingContent.key_drivers || [],
+        confidenceScore: briefingContent.confidenceScore || briefingContent.confidence_score || 1.0,
+      })
       addToast('Executive Product Briefing generated successfully', 'success')
     } catch (err) {
       const msg = err.message || 'Failed to generate executive briefing'
@@ -86,43 +95,42 @@ export function InsightsPage() {
       executiveSummary.featureOpportunities.forEach((opp, idx) => {
         list.push({
           id: `opp-${idx}`,
-          title: `Opportunity: ${opp.category}`,
-          category: opp.category,
+          title: `Opportunity: ${opp.title || opp.category}`,
+          category: opp.category || 'Feature Request',
           severity: opp.opportunityScore > 75 ? 'critical' : opp.opportunityScore > 50 ? 'high' : 'medium',
-          summary: opp.recommendation,
-          recommendation: `Align upcoming sprint backlog to address ${opp.category} demand. Priority score: ${opp.opportunityScore?.toFixed(0)}`,
+          summary: opp.reason || opp.recommendation || `Demand count: ${opp.demandCount}`,
+          recommendation: `Align upcoming sprint backlog to address ${opp.title || opp.category} demand. Priority score: ${opp.opportunityScore?.toFixed(0)}`,
           score: opp.opportunityScore,
           type: 'opportunity',
-          evidenceCount: opp.evidenceFeedbackIds?.length || 0,
+          evidenceCount: opp.evidenceFeedbackIds?.length || opp.demandCount || 0,
         })
       })
     }
 
     // 2. Customer Pain Points
-    if (executiveSummary?.customerSentiment?.topCustomerPainPoints) {
-      executiveSummary.customerSentiment.topCustomerPainPoints.forEach((pain, idx) => {
-        list.push({
-          id: `pain-${idx}`,
-          title: `Pain Point: ${pain.category}`,
-          category: pain.category,
-          severity: pain.sentimentRatio < 0.3 ? 'critical' : 'high',
-          summary: `${pain.negativeCount} negative feedback items recorded. Primary cluster: ${pain.category}.`,
-          recommendation: `Investigate root cause in ${pain.category}. Review related tickets and prioritize remediations.`,
-          type: 'pain_point',
-          evidenceCount: pain.negativeCount,
-        })
+    const painPointsList = executiveSummary?.topCustomerPainPoints || executiveSummary?.customerSentiment?.topCustomerPainPoints || []
+    painPointsList.forEach((pain, idx) => {
+      list.push({
+        id: `pain-${idx}`,
+        title: `Pain Point: ${pain.theme || pain.category || 'Customer Friction'}`,
+        category: pain.theme || pain.category || 'General',
+        severity: (pain.severity || 'high').toLowerCase(),
+        summary: pain.customerPainPoint || pain.summary || `${pain.frequency || 1} feedback occurrences recorded.`,
+        recommendation: `Investigate root cause in ${pain.theme || pain.category || 'friction area'}. Review feedback items and prioritize remediations.`,
+        type: 'pain_point',
+        evidenceCount: pain.frequency || pain.negativeCount || 1,
       })
-    }
+    })
 
     // 3. Delivery Risks
     if (executiveSummary?.deliveryRisk?.itemsAtRisk) {
       executiveSummary.deliveryRisk.itemsAtRisk.forEach((riskItem, idx) => {
         list.push({
           id: `risk-${idx}`,
-          title: `Delivery Risk: ${riskItem.itemTitle}`,
+          title: `Delivery Risk: ${riskItem.title || riskItem.itemTitle}`,
           category: 'Delivery',
-          severity: riskItem.riskLevel === 'high' ? 'critical' : riskItem.riskLevel === 'medium' ? 'high' : 'medium',
-          summary: riskItem.reason || `Risk detected for roadmap item ${riskItem.itemTitle}`,
+          severity: riskItem.severity || (riskItem.riskLevel === 'high' ? 'critical' : riskItem.riskLevel === 'medium' ? 'high' : 'medium'),
+          summary: riskItem.reason || `Risk detected for roadmap item ${riskItem.title || riskItem.itemTitle}`,
           recommendation: `Unblock dependencies and reassign engineering resources. Item status: ${riskItem.status}.`,
           type: 'risk',
           evidenceCount: 1,
@@ -256,6 +264,22 @@ export function InsightsPage() {
                       </p>
                     )}
                   </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Key Drivers */}
+          {executiveBriefing.keyDrivers?.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
+                Key Strategic Drivers
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {executiveBriefing.keyDrivers.map((driver, i) => (
+                  <Badge key={i} variant="neutral" size="sm">
+                    {driver}
+                  </Badge>
                 ))}
               </div>
             </div>

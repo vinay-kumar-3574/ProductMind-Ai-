@@ -175,9 +175,18 @@ export async function request(endpoint, options = {}) {
   }
 
   let url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`
-  if (params && typeof params === 'object') {
+  let queryParams = params
+  if (!queryParams && method === 'GET' && Object.keys(rest).length > 0) {
+    const fetchOptionKeys = new Set(['mode', 'credentials', 'cache', 'redirect', 'referrer', 'referrerPolicy', 'integrity', 'keepalive', 'window'])
+    const candidateEntries = Object.entries(rest).filter(([k]) => !fetchOptionKeys.has(k))
+    if (candidateEntries.length > 0) {
+      queryParams = Object.fromEntries(candidateEntries)
+    }
+  }
+
+  if (queryParams && typeof queryParams === 'object') {
     const searchParams = new URLSearchParams()
-    Object.entries(params).forEach(([key, value]) => {
+    Object.entries(queryParams).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') {
         searchParams.append(key, String(value))
       }

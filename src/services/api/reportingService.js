@@ -3,7 +3,7 @@
  * Interacts with FastAPI /api/v1/reports/* endpoints to deliver live,
  * Atlas-grounded metrics, saved reports CRUD, structured exports, and AI briefings.
  */
-import { apiClient } from './apiClient'
+import { apiClient, getAuthToken, getApiBaseUrl } from './apiClient'
 import { API_ENDPOINTS } from './types'
 
 function assertSuccess(res, fallbackMsg = 'Reporting API request failed.') {
@@ -120,21 +120,37 @@ export const reportingService = {
    */
   async exportReport({ workspaceId, format = 'json', timeRange = '30d' } = {}) {
     if (!workspaceId) throw new Error('workspaceId is required.')
-    const url = `${API_ENDPOINTS.REPORTS.EXPORT}?workspaceId=${encodeURIComponent(workspaceId)}&format=${format}&timeRange=${timeRange}`
+    const baseUrl = getApiBaseUrl() || ''
+    const url = `${baseUrl}${API_ENDPOINTS.REPORTS.EXPORT}?workspaceId=${encodeURIComponent(workspaceId)}&format=${format}&timeRange=${timeRange}`
 
-    if (format === 'json') {
-      const res = await apiClient.get(API_ENDPOINTS.REPORTS.EXPORT, { workspaceId, format: 'json', timeRange })
-      assertSuccess(res, 'Failed to export JSON report.')
-      return res.data || res
-    }
-
-    // Direct browser CSV download
-    const token = localStorage.getItem('productmind_access_token') || sessionStorage.getItem('productmind_access_token')
+    const token = getAuthToken() || localStorage.getItem('productmind_access_token') || sessionStorage.getItem('productmind_access_token')
     const headers = {}
     if (token) {
       headers.Authorization = `Bearer ${token}`
     }
 
+    if (format === 'json') {
+      headers.Accept = 'application/json'
+      const response = await fetch(url, { headers })
+      if (!response.ok) {
+        throw new Error(`Export failed with HTTP ${response.status}`)
+      }
+      const jsonData = await response.json()
+      const jsonString = JSON.stringify(jsonData, null, 2)
+      const blob = new Blob([jsonString], { type: 'application/json' })
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = `product_intelligence_${workspaceId}_${timeRange}.json`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(downloadUrl)
+      return { success: true, format: 'json', data: jsonData }
+    }
+
+    // Direct browser CSV download
+    headers.Accept = 'text/csv'
     const response = await fetch(url, { headers })
     if (!response.ok) {
       throw new Error(`Export failed with HTTP ${response.status}`)
@@ -148,7 +164,7 @@ export const reportingService = {
     link.click()
     document.body.removeChild(link)
     window.URL.revokeObjectURL(downloadUrl)
-    return true
+    return { success: true, format: 'csv' }
   },
 
   /**

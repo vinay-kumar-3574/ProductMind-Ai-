@@ -66,6 +66,7 @@ class ProductIntelligenceAgent(BaseAgent[ExecutiveBriefingResult]):
         """Executes bounded briefing synthesis with strict zero-fabrication guarantees."""
         messages = self._build_messages(metrics_summary)
         result = await self.llm_service.generate_structured(
+            schema=ExecutiveBriefingResult,
             messages=messages,
             response_schema=ExecutiveBriefingResult,
             temperature=0.2,

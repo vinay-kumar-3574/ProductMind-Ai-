@@ -121,6 +121,15 @@ class ProductIntelligenceService:
             start, end = today - timedelta(days=6), today
         elif time_range == "90d":
             start, end = today - timedelta(days=89), today
+        elif time_range == "quarter":
+            current_quarter = (today.month - 1) // 3
+            quarter_start_month = current_quarter * 3 + 1
+            start = date(today.year, quarter_start_month, 1)
+            if quarter_start_month + 2 == 12:
+                end = date(today.year, 12, 31)
+            else:
+                next_q_start = date(today.year, quarter_start_month + 3, 1)
+                end = next_q_start - timedelta(days=1)
         elif time_range == "all":
             start, end = today - timedelta(days=364), today
         else:  # default 30d
@@ -835,7 +844,7 @@ class ProductIntelligenceService:
 
         # 1. Fetch live Atlas records
         feedback_items = await self.feedback_repo.find_by_workspace(ws_oid, limit=500)
-        roadmap_items = await self.roadmap_repo.find_items_by_workspace(ws_oid)
+        roadmap_items = await self.roadmap_repo.find_by_workspace(ws_oid, limit=500)
         feature_groups = await self.feature_group_repo.find_by_workspace(ws_oid)
         scenarios = await self.prioritization_scenario_repo.find_by_workspace(ws_oid)
 

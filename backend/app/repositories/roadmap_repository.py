@@ -174,6 +174,15 @@ class RoadmapRepository(BaseRepository[RoadmapItem]):
     ) -> Optional[RoadmapItem]:
         return await self.find_by_id(item_id, workspace_id=workspace_id)
 
+    async def find_items_by_workspace(
+        self,
+        workspace_id: Any,
+        skip: int = 0,
+        limit: int = 500,
+    ) -> List[RoadmapItem]:
+        """Defensive alias for workspace item retrieval."""
+        return await self.find_by_workspace(workspace_id, skip=skip, limit=limit)
+
     async def find_by_release(self, workspace_id: Any, release_id: Any) -> List[RoadmapItem]:
         rel_oid = self._ensure_object_id(release_id)
         return await self.find_by_workspace(

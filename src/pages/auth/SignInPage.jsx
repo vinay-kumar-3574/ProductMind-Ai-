@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { Sparkles, Eye, EyeOff, Lock, Mail, ArrowRight, ShieldAlert, CheckCircle2, UserCheck } from 'lucide-react'
 import { isBackendConfigured } from '../../services/api/apiClient'
@@ -9,7 +9,7 @@ export function SignInPage() {
   const location = useLocation()
   const { login, demoLogin, isAuthenticated } = useAuth()
 
-  const [email, setEmail] = useState('demo@productmind.ai')
+  const [email, setEmail] = useState('alex.rivera@productmind.ai')
   const [password, setPassword] = useState('demo123')
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(true)
@@ -18,10 +18,9 @@ export function SignInPage() {
 
   const from = location.state?.from?.pathname || '/'
 
-  // Redirect if already authenticated
+  // Redirect if already authenticated using declarative Navigate component to prevent setState in render
   if (isAuthenticated) {
-    navigate(from, { replace: true })
-    return null
+    return <Navigate to={from} replace />
   }
 
   const handleSubmit = async (e) => {
@@ -39,7 +38,17 @@ export function SignInPage() {
     }
   }
 
-  const handle1ClickPMLogin = () => {
+  const handle1ClickPMLogin = async () => {
+    const backendConfigured = isBackendConfigured()
+    if (backendConfigured) {
+      setLoading(true)
+      const res = await login('alex.rivera@productmind.ai', 'demo123', true)
+      setLoading(false)
+      if (res.success) {
+        navigate(from, { replace: true })
+        return
+      }
+    }
     demoLogin()
     navigate(from, { replace: true })
   }
@@ -101,9 +110,12 @@ export function SignInPage() {
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              Product Manager Email
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Product Manager Email
+              </label>
+              <span className="text-[10px] text-slate-400">demo123 (demo password)</span>
+            </div>
             <div className="relative">
               <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -111,7 +123,7 @@ export function SignInPage() {
                 required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="pm@productmind.ai"
+                placeholder="alex.rivera@productmind.ai"
                 className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-navy-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
             </div>
